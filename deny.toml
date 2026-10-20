@@ -1,0 +1,45 @@
+[advisories]
+ignore = [
+]
+version = 2
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+private = { ignore = true }
+version = 2
+
+[bans]
+allow = []
+deny = []
+multiple-versions = "deny"
+skip = []
+skip-tree = [
+    # do not care about windows; not in use
+    { name = "windows-sys" }
+]
+
+wildcards = "deny"
+allow-wildcard-paths = false
+
+[sources]
+allow-git = []
+allow-registry = [
+    "https://github.com/rust-lang/crates.io-index"
+]
+unknown-git = "deny"
+unknown-registry = "deny"
+
+[sources.allow-org]
+bitbucket = []
+github = []
+gitlab = []
