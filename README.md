@@ -31,11 +31,11 @@ Ubuntu 24.04 or later.
 
 # Build Dependencies
 
-`libgtk-4-dev` (for the default GTK build). More TBD; likely apt packages.
+`libgtk-4-dev` (for the default GTK build), `libheif-dev`.
 
 # Runtime Dependencies
 
-`libgtk-4-1` (for the default GTK build). More TBD; likely apt packages.
+`libgtk-4-1` (for the default GTK build), `libheif1`, and the libheif plugins for the HEIF and AVIF codecs: `libheif-plugin-libde265`, `libheif-plugin-x265`, `libheif-plugin-aomdec`, `libheif-plugin-aomenc`.
 
 # Building
 

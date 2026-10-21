@@ -6,10 +6,19 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+image.workspace = true
+kamadak-exif.workspace = true
+libheif-rs.workspace = true
+serde.workspace = true
+tiff.workspace = true
+webp.workspace = true
+yaml_serde.workspace = true
 
 [dev-dependencies]
 cucumber.workspace = true
 futures.workspace = true
+image.workspace = true
+yaml_serde.workspace = true
 
 [[test]]
 name = "features"

@@ -16,6 +16,20 @@ cucumber = "0.23"
 futures = "0.3"
 gtk4 = "0.11"
 iced = "0.14"
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 imaginer-core = { path = "crates/imaginer-core", version = "0.1.0" }
 imaginer-gtk = { path = "crates/imaginer-gtk", version = "0.1.0" }
 imaginer-iced = { path = "crates/imaginer-iced", version = "0.1.0" }
+kamadak-exif = "0.6"
+libheif-rs = { version = "3", default-features = false, features = ["v1_17"] }
+serde = { version = "1", features = ["derive"] }
+tiff = "0.11"
+webp = { version = "0.3", default-features = false }
+yaml_serde = "0.10"
+
+# Image decoding and resampling are unusably slow without optimization.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
