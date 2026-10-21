@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use image::RgbaImage;
 use image::imageops::FilterType;
-use image::{Rgba, RgbaImage};
 
 use crate::codec;
 use crate::geometry::{Point, Rect};
@@ -186,7 +186,22 @@ impl Renderer {
         scale: f64,
         preview: bool,
     ) -> RgbaImage {
-        let mut out = vec![[0f32; 4]; width as usize * height as usize];
+        let mut image = RgbaImage::new(width, height);
+        self.composite(state, region, scale, preview, &mut image);
+        image
+    }
+
+    /// Composites the canvas area `region` over `out`, `scale` output pixels per canvas
+    /// pixel.
+    pub fn composite(
+        &mut self,
+        state: &ProjectState,
+        region: Rect,
+        scale: f64,
+        preview: bool,
+        out: &mut RgbaImage,
+    ) {
+        let (width, height) = out.dimensions();
         // Items are resampled to at most their full size; larger zooms sample from that.
         let prepared_scale = scale.min(1.0);
 
@@ -211,13 +226,24 @@ impl Renderer {
             let y1 = (((visible.bottom() - region.y) * scale).ceil() as u32).min(height);
             let sx = f64::from(scaled_w) / f64::from(item.width);
             let sy = f64::from(scaled_h) / f64::from(item.height);
+            // Canvas → item-local mapping, computed once per item (see Item::to_local).
+            let frame = item.frame();
+            let center = frame.center();
+            let (sin, cos) = (-item.rotation).to_radians().sin_cos();
+            let to_local = |p: Point| {
+                let (dx, dy) = (p.x - center.x, p.y - center.y);
+                Point::new(
+                    center.x + dx * cos - dy * sin - frame.x,
+                    center.y + dx * sin + dy * cos - frame.y,
+                )
+            };
             for py in y0..y1 {
                 for px in x0..x1 {
                     let p = Point::new(
                         region.x + (f64::from(px) + 0.5) / scale,
                         region.y + (f64::from(py) + 0.5) / scale,
                     );
-                    let local = item.to_local(p);
+                    let local = to_local(p);
                     let (lx, ly) = (local.x * sx, local.y * sy);
                     let color = match &pixels {
                         Some(pixels) => {
@@ -239,22 +265,13 @@ impl Renderer {
                     if color[3] <= 0.0 {
                         continue;
                     }
-                    let dst = &mut out[py as usize * width as usize + px as usize];
-                    *dst = over(color, *dst);
+                    let dst = out.get_pixel_mut(px, py);
+                    let below = dst.0.map(|c| f32::from(c) / 255.0);
+                    let mixed = over(color, below);
+                    dst.0 = mixed.map(to_u8);
                 }
             }
         }
-
-        let mut image = RgbaImage::new(width, height);
-        for (pixel, value) in image.pixels_mut().zip(out) {
-            *pixel = Rgba([
-                to_u8(value[0]),
-                to_u8(value[1]),
-                to_u8(value[2]),
-                to_u8(value[3]),
-            ]);
-        }
-        image
     }
 }
 

@@ -192,6 +192,8 @@ pub struct Editor {
     pending: Option<(AdjustTarget, Step)>,
     snapping: bool,
     frame_cache: Option<overlay::FrameCache>,
+    /// Background and checkerboard, keyed by viewport size and canvas position.
+    background: Option<(overlay::BackgroundKey, image::RgbaImage)>,
     message: Option<String>,
 }
 
@@ -218,6 +220,7 @@ impl Editor {
             pending: None,
             snapping: true,
             frame_cache: None,
+            background: None,
             message: None,
         };
         editor.fit_view();

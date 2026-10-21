@@ -24,6 +24,9 @@ const FEATHER: [u8; 4] = [0x2e, 0xc2, 0x7e, 0xff];
 const GUIDE: [u8; 4] = [0xc0, 0x61, 0xcb, 0xff];
 const CHECK_SIZE: i64 = 8;
 
+/// Viewport size and the canvas rectangle on screen.
+pub(super) type BackgroundKey = (u32, u32, [i64; 4]);
+
 pub(super) struct FrameCache {
     state: ProjectState,
     view: View,
@@ -54,28 +57,37 @@ impl Editor {
     fn base_frame(&mut self, state: &ProjectState, view: &View) -> RgbaImage {
         let width = view.viewport.0.round().max(1.0) as u32;
         let height = view.viewport.1.round().max(1.0) as u32;
-        let content =
-            self.renderer
-                .render_region(state, view.visible(), width, height, view.zoom, true);
         let canvas = state.canvas_rect();
         let top_left = view.to_screen(Point::new(canvas.x, canvas.y));
         let bottom_right = view.to_screen(Point::new(canvas.right(), canvas.bottom()));
-        let (cx0, cy0) = (top_left.x.round() as i64, top_left.y.round() as i64);
-        let (cx1, cy1) = (bottom_right.x.round() as i64, bottom_right.y.round() as i64);
-        let mut image = RgbaImage::new(width, height);
-        for (x, y, pixel) in image.enumerate_pixels_mut() {
-            let (sx, sy) = (i64::from(x), i64::from(y));
-            let inside = sx >= cx0 && sx < cx1 && sy >= cy0 && sy < cy1;
-            let base = if !inside {
-                BACKGROUND
-            } else if ((sx - cx0) / CHECK_SIZE + (sy - cy0) / CHECK_SIZE) % 2 == 0 {
-                CHECK_LIGHT
-            } else {
-                CHECK_DARK
-            };
-            let c = content.get_pixel(x, y).0;
-            *pixel = Rgba(blend(base, c));
-        }
+        let bounds = [
+            top_left.x.round() as i64,
+            top_left.y.round() as i64,
+            bottom_right.x.round() as i64,
+            bottom_right.y.round() as i64,
+        ];
+        let key = (width, height, bounds);
+        let mut image = match &self.background {
+            Some((cached, image)) if *cached == key => image.clone(),
+            _ => {
+                let [cx0, cy0, cx1, cy1] = bounds;
+                let image = RgbaImage::from_fn(width, height, |x, y| {
+                    let (sx, sy) = (i64::from(x), i64::from(y));
+                    let inside = sx >= cx0 && sx < cx1 && sy >= cy0 && sy < cy1;
+                    Rgba(if !inside {
+                        BACKGROUND
+                    } else if ((sx - cx0) / CHECK_SIZE + (sy - cy0) / CHECK_SIZE) % 2 == 0 {
+                        CHECK_LIGHT
+                    } else {
+                        CHECK_DARK
+                    })
+                });
+                self.background = Some((key, image.clone()));
+                image
+            }
+        };
+        self.renderer
+            .composite(state, view.visible(), view.zoom, true, &mut image);
         image
     }
 
