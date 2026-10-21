@@ -37,8 +37,17 @@ shall be offered to locate the file. Locating it updates the source path.
 ### PROJ-006: Replay
 Status: Draft
 
-Steps shall be stored in the order they were applied. Opening a project shall replay
-them in order to produce the same result as before saving.
+Steps shall be stored in the order they were applied, one entry per step; consecutive
+steps are never merged. Opening a project shall replay them in order to produce the same
+result as before saving.
+
+### PROJ-008: Redo history
+Status: Draft
+
+Undone steps that can still be redone shall be saved in a `redo` list, ordered so that
+the first entry is the next to be redone. Opening a project shall restore them as the
+redo history without applying them. Undo history needs no extra storage: it is the
+`steps` list.
 
 ### PROJ-007: Unknown fields
 Status: Draft
@@ -62,7 +71,10 @@ steps:
   - add_item: { id: i1, source: s1, x: 0, y: 0 }
   - add_item: { id: i2, source: s2, x: 1400, y: 0 }
   - crop_item: { item: i2, left: 100, top: 0, width: 1600, height: 1200 }
-  - add_transition: { id: t1, lower: i1, upper: i2, orientation: horizontal, seam: 1500, width: 200, curve: linear }
+  - add_transition: { id: t1, type: gradient_seam, lower: i1, upper: i2, orientation: horizontal, seam: 1500, width: 200, curve: linear }
+  - strip_metadata: { item: i1 }
+redo:
+  - move_item: { item: i2, x: 1450, y: 0 }
 ```
 
 ## Step types
@@ -70,16 +82,14 @@ steps:
 | Step | Requirement |
 |---|---|
 | `add_item` | PLACE-001 |
-| `move_item` | PLACE-002 |
+| `move_item` | PLACE-002, UI-006 |
 | `resize_item` | PLACE-003, RES-001 |
 | `crop_item` | PLACE-004, CROP-004 |
 | `set_z_order` | PLACE-005 |
+| `rotate_item` | PLACE-007, PLACE-008, UI-006 |
 | `set_dpi` | RES-003 |
 | `resize_canvas` | CANVAS-002, CANVAS-003 |
-| `add_transition`, `edit_transition`, `remove_transition` | BLEND-001 to BLEND-003 |
+| `add_transition`, `edit_transition`, `remove_transition` | BLEND-001 to BLEND-003, BLEND-008 |
+| `set_feather` | BLEND-007 |
+| `strip_metadata` | META-004 |
 | `relink_source` | PROJ-005 |
-
-## Open questions
-
-- Should a run of consecutive steps on the same item (for example many moves) be
-  collapsed into one when saving, to keep files short?

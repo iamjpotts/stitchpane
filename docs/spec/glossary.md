@@ -25,12 +25,20 @@ The same source may be placed more than once.
 
 **Seam** — The line along which a transition is centered.
 
+**Snapping** — While dragging, a position jumps into exact alignment with a nearby
+edge or center line. See PLACE-006.
+
 **Source** — An image file referenced by a project. Never modified.
 
 **Step** — One recorded edit (for example "crop item", "move item"). A project is
 replayed by applying its steps in order. Each completed user action produces one step.
 
-**Transition** — A blend between two overlapping items. See `product/composition.md`.
+**EXIF** — Metadata embedded in an image by the camera or editor (camera model, date,
+exposure, location, orientation, ...). See `product/metadata.md`.
+
+**Transition** — A gradual change in an item's transparency: a gradient seam or
+crossfade between two overlapping items, or a feathered edge on one item. See
+`product/composition.md`.
 
 **Transition band** — The region around the seam over which a transition blends; its
 width is adjustable.

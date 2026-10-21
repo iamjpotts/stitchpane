@@ -45,6 +45,7 @@ When the user drags a crop handle, the system shall ...
 | `CROP`, `RES`, `CONV` | `product/single-image.md` |
 | `CANVAS`, `PLACE`, `BLEND` | `product/composition.md` |
 | `UNDO` | `product/editing.md` |
+| `META` | `product/metadata.md` |
 | `EXPORT` | `product/export.md` |
 | `UI` | `ui/workflows.md` |
 

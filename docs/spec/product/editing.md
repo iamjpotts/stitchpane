@@ -25,10 +25,11 @@ redo, they shall be disabled.
 Status: Draft
 
 A drag shall produce one step when the mouse button is released, not one per movement.
-Typing in a numeric field shall produce one step when the value is committed.
+Typing in a numeric field shall produce one step when the value is committed. Repeated
+arrow-key adjustments of the same target shall produce one step (UI-006).
 
-## Open questions
+### UNDO-005: History survives saving
+Status: Draft
 
-- Should the undo history survive saving and reopening a project? (Currently: the
-  project file holds the applied steps, so undo still works after reopening; redo
-  history is not saved.)
+Undo and redo history shall be saved in the project file (PROJ-008), so that after
+reopening a project the user can undo and redo exactly as before saving.

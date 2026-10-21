@@ -1,7 +1,8 @@
 # Single image
 
-Editing one image. Internally this is a composition with one item whose canvas tracks the
-item's size, so every operation here is also available to items in a composition.
+Editing one image. There is no separate single-image mode (UI-005): a single image is a
+composition with one item whose canvas tracks the item's size, so every operation here
+is also available to items in a composition.
 
 ## Crop
 
@@ -78,10 +79,3 @@ Status: Draft
 
 When exporting to a lossy format, the system shall offer a quality setting (default 90
 on a 1–100 scale).
-
-## Open questions
-
-- Should EXIF/metadata be preserved on export, stripped, or user-selectable?
-- Should EXIF orientation be applied automatically when opening (likely yes; phones rely
-  on it)?
-- Codec libraries: see `decisions/0003-image-codecs.md`.
