@@ -175,9 +175,15 @@ pub(super) enum GestureKind {
     },
 }
 
+/// A press must move this far, in screen pixels, before it counts as a drag; a plain
+/// click selects without changing anything.
+const DRAG_THRESHOLD: f64 = 3.0;
+
 #[derive(Clone, Debug)]
 pub(super) struct Gesture {
     start: Point,
+    start_screen: Point,
+    dragging: bool,
     kind: GestureKind,
     preview: Option<Step>,
     /// View scroll that keeps items still on screen while the canvas grows (CANVAS-003).
@@ -193,8 +199,7 @@ impl Gesture {
 
 /// Canvas point of an item-local point.
 pub(super) fn item_point(item: &Item, local: Point) -> Point {
-    let frame = item.frame();
-    Point::new(frame.x + local.x, frame.y + local.y).rotated_about(frame.center(), item.rotation)
+    item.to_canvas(local)
 }
 
 /// Screen-space unit vector pointing "up" from an item's top edge.
@@ -328,20 +333,24 @@ impl Editor {
             ));
             let up = item_up(item);
             let rotate = Point::new(top.x + up.x * ROTATE_OFFSET, top.y + up.y * ROTATE_OFFSET);
-            if rotate.distance(screen) <= HANDLE_RADIUS + 3.0 {
-                return Hit::Rotate(item.id);
-            }
+            // The nearest handle wins where handles overlap.
+            let mut candidates = vec![(rotate.distance(screen) - 3.0, Hit::Rotate(item.id))];
             for edge in feathered_edges(item) {
                 let width = item.feather.map(|f| f.width).unwrap_or(0.0);
-                if near(feather_handle(item, edge, width)) {
-                    return Hit::Feather(item.id, edge);
-                }
+                let p = self.screen(feather_handle(item, edge, width));
+                candidates.push((p.distance(screen), Hit::Feather(item.id, edge)));
             }
             for handle in HandlePos::ALL {
                 let local = handle.at(f64::from(item.width), f64::from(item.height));
-                if near(item_point(item, local)) {
-                    return Hit::Resize(item.id, handle);
-                }
+                let p = self.screen(item_point(item, local));
+                candidates.push((p.distance(screen), Hit::Resize(item.id, handle)));
+            }
+            if let Some((_, hit)) = candidates
+                .into_iter()
+                .filter(|(d, _)| *d <= HANDLE_RADIUS + 2.0)
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+            {
+                return hit;
             }
         }
 
@@ -474,6 +483,8 @@ impl Editor {
         };
         self.gesture = Some(Gesture {
             start,
+            start_screen: screen,
+            dragging: false,
             kind,
             preview: None,
             pan_shift: Point::default(),
@@ -504,9 +515,14 @@ impl Editor {
     }
 
     pub fn pointer_move(&mut self, screen: Point, mods: Modifiers) {
-        let Some(gesture) = self.gesture.take() else {
+        let Some(mut gesture) = self.gesture.take() else {
             return;
         };
+        if !gesture.dragging && screen.distance(gesture.start_screen) < DRAG_THRESHOLD {
+            self.gesture = Some(gesture);
+            return;
+        }
+        gesture.dragging = true;
         let p = self.view.to_canvas(screen);
         let tolerance = SNAP_DISTANCE / self.view.zoom;
         let snapping = self.snapping && !mods.alt;
@@ -600,14 +616,15 @@ impl Editor {
                         (offset, (2.0 * (along - seam.position).abs()).round())
                     }
                 };
-                Some(Step::EditTransition {
+                let new_kind = TransitionKind::GradientSeam {
+                    orientation,
+                    offset,
+                    width,
+                    curve,
+                };
+                (new_kind != *kind).then_some(Step::EditTransition {
                     id: *id,
-                    kind: TransitionKind::GradientSeam {
-                        orientation,
-                        offset,
-                        width,
-                        curve,
-                    },
+                    kind: new_kind,
                 })
             }
             GestureKind::Feather(item, edge) => {
@@ -623,7 +640,7 @@ impl Editor {
                     .feather
                     .unwrap_or_else(|| self.default_feather(item.id));
                 feather.width = inward.round().clamp(1.0, max.max(1.0));
-                Some(Step::SetFeather {
+                (Some(feather) != item.feather).then_some(Step::SetFeather {
                     item: item.id,
                     feather: Some(feather),
                 })
@@ -659,7 +676,9 @@ impl Editor {
                 let offset_x = -l as i32;
                 let offset_y = -t as i32;
                 pan_shift = Point::new(f64::from(offset_x), f64::from(offset_y));
-                Some(Step::ResizeCanvas {
+                let unchanged = Rect::new(l, t, r - l, b - t) == *original
+                    && matches!(self.project.state().canvas.size, CanvasSize::Fixed { .. });
+                (!unchanged).then_some(Step::ResizeCanvas {
                     width: (r - l) as u32,
                     height: (b - t) as u32,
                     offset_x,

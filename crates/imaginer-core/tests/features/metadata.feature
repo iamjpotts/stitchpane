@@ -89,3 +89,11 @@ Feature: Metadata
     Then the canvas is 20 by 40 pixels
     And the rendered canvas is roughly the source rotated a quarter turn clockwise
     And the project has 1 steps
+
+  @META-005 @EXPORT-002
+  Scenario: Exported EXIF carries the canvas resolution
+    When I open "cam.jpg"
+    And I set the DPI to 300
+    And I prepare to export to "out.jpg"
+    And I export to "out.jpg" with the prepared settings
+    Then "out.jpg" has EXIF resolution 300

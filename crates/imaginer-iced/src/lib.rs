@@ -52,6 +52,7 @@ pub enum Message {
     Command(Command),
     CloseMenu,
     FileDropped(PathBuf),
+    FlushDrops,
     CloseRequested(window::Id),
     Modal(dialogs::ModalMessage),
     /// Files chosen in a file dialog, for a purpose.
@@ -111,6 +112,8 @@ pub struct App {
     /// Status bar notices, computed in refresh() (META-001, PROJ-005).
     exif_notice: Option<String>,
     missing_notice: Option<String>,
+    /// Files dropped together, added as one batch (PLACE-001).
+    drops: Vec<PathBuf>,
 }
 
 fn modifiers(m: keyboard::Modifiers) -> Modifiers {
@@ -174,6 +177,7 @@ impl App {
             window: None,
             exif_notice: None,
             missing_notice: None,
+            drops: Vec::new(),
         };
         let result = match paths.len() {
             0 => Ok(()),
@@ -217,8 +221,14 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        // Keep what the user is typing in the crop fields (CROP-002).
+        let typing = matches!(message, Message::CropField(..));
         let task = self.handle(message);
+        let fields = self.crop_fields.clone();
         self.refresh();
+        if typing {
+            self.crop_fields = fields;
+        }
         task
     }
 
@@ -268,8 +278,15 @@ impl App {
             }
             Message::CloseMenu => self.menu = None,
             Message::FileDropped(path) => {
-                let at = point(self.pointer);
-                if let Err(e) = self.editor.add_images(&[path], Some(at)) {
+                self.drops.push(path);
+                // Every file of one drop arrives before this task's message.
+                if self.drops.len() == 1 {
+                    return Task::perform(async {}, |()| Message::FlushDrops);
+                }
+            }
+            Message::FlushDrops => {
+                let paths = std::mem::take(&mut self.drops);
+                if let Err(e) = self.editor.add_images(&paths, None) {
                     self.modal = Some(Modal::Error(e));
                 }
             }
@@ -614,11 +631,12 @@ impl Program<Message> for CanvasView<'_> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
-        if state.size != bounds.size() {
-            state.size = bounds.size();
-            return Some(canvas::Action::publish(Message::Resized(bounds.size())));
-        }
         let Event::Mouse(event) = event else {
+            // Report size changes on non-mouse events so no pointer event is lost.
+            if state.size != bounds.size() {
+                state.size = bounds.size();
+                return Some(canvas::Action::publish(Message::Resized(bounds.size())));
+            }
             return None;
         };
         let inside = cursor.position_in(bounds);

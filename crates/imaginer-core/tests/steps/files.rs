@@ -375,3 +375,16 @@ fn export_fails(world: &mut World, text: String) {
     let error = world.error.as_deref().expect("export should have failed");
     assert!(error.contains(&text), "{error}");
 }
+
+#[then(expr = "{string} has EXIF resolution {int}")]
+fn exif_resolution(world: &mut World, file: String, dpi: f64) {
+    let fields = exif_fields(world, &file);
+    let x = fields
+        .iter()
+        .find(|f| f.tag == Tag::XResolution)
+        .and_then(|f| match &f.value {
+            Value::Rational(r) => r.first().map(|r| r.to_f64()),
+            _ => None,
+        });
+    assert_eq!(x, Some(dpi));
+}

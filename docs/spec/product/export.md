@@ -28,3 +28,6 @@ onto white.
 - Export is refused while a source image is missing.
 - DPI is written to PNG, JPEG, TIFF and BMP. WebP, HEIF and AVIF have no standard DPI
   field, so none is written.
+- Choosing a format in the export dialog changes the file extension. If the new name is a
+  source or an existing file, export stops and asks the user to export again and choose
+  that name.

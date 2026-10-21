@@ -177,10 +177,7 @@ impl ItemMapping {
 
     /// Source pixel → canvas point.
     pub(super) fn source_to_canvas(&self, p: Point) -> Point {
-        let local = self.source_to_local(p);
-        let frame = self.item.frame();
-        Point::new(frame.x + local.x, frame.y + local.y)
-            .rotated_about(frame.center(), self.item.rotation)
+        self.item.to_canvas(self.source_to_local(p))
     }
 
     /// Canvas point → source pixel.

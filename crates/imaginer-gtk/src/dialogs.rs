@@ -524,15 +524,19 @@ fn print_size(ui: &Rc<Ui>, item: ItemId) {
         f64::from(i.width) / f64::from(i.height),
     );
     let filter = filter_dropdown(i.filter);
-    let (w_ref, h_ref) = (width.clone(), height.clone());
+    let (w_ref, h_ref, lock_ref) = (width.clone(), height.clone(), lock.clone());
     unit.connect_selected_notify(move |unit| {
         let factor = if unit.selected() == 1 {
             2.54
         } else {
             1.0 / 2.54
         };
+        // Convert both values directly; the aspect lock would convert the other twice.
+        let locked = lock_ref.is_active();
+        lock_ref.set_active(false);
         w_ref.set_value(w_ref.value() * factor);
         h_ref.set_value(h_ref.value() * factor);
+        lock_ref.set_active(locked);
     });
     let body = form(&[
         ("Unit", unit.upcast_ref()),
@@ -911,6 +915,17 @@ fn export_options(ui: &Rc<Ui>, path: PathBuf) {
         settings.format = formats[format.selected() as usize];
         if Format::from_path(&settings.path) != Some(settings.format) {
             settings.path.set_extension(settings.format.extensions()[0]);
+        }
+        // A changed extension is a file the user has not confirmed (EXPORT-003).
+        if settings.path != defaults.path {
+            let overwrites = ui.editor.borrow().export_overwrites_source(&settings.path);
+            if overwrites || settings.path.exists() {
+                ui.error(&format!(
+                    "{} already exists. Export again and choose that name to replace it.",
+                    settings.path.display()
+                ));
+                return false;
+            }
         }
         settings.quality = quality.value() as u8;
         settings.metadata = match source.selected() {

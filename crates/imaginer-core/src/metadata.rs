@@ -181,33 +181,61 @@ impl Exif {
     }
 
     /// Encodes the chosen groups for an exported image of the given size, with
-    /// orientation reset to upright and pixel dimensions updated (META-005).
-    pub fn export(&self, groups: &[ExifGroup], width: u32, height: u32) -> Option<Vec<u8>> {
-        let replaced = [Tag::Orientation, Tag::PixelXDimension, Tag::PixelYDimension];
+    /// orientation reset to upright, pixel dimensions updated, and the resolution taken
+    /// from the canvas DPI rather than the source (META-005, EXPORT-002).
+    pub fn export(
+        &self,
+        groups: &[ExifGroup],
+        width: u32,
+        height: u32,
+        dpi: Option<f64>,
+    ) -> Option<Vec<u8>> {
+        // Tags that describe the source file's own encoding or are rewritten below.
+        let replaced = [
+            Tag::Orientation,
+            Tag::PixelXDimension,
+            Tag::PixelYDimension,
+            Tag::XResolution,
+            Tag::YResolution,
+            Tag::ResolutionUnit,
+            Tag::ImageWidth,
+            Tag::ImageLength,
+            Tag::Compression,
+            Tag::BitsPerSample,
+            Tag::PhotometricInterpretation,
+            Tag::SamplesPerPixel,
+            Tag::PlanarConfiguration,
+            Tag::RowsPerStrip,
+            Tag::YCbCrSubSampling,
+        ];
         let mut fields: Vec<Field> = self
             .fields
             .iter()
             .filter(|f| groups.contains(&ExifGroup::of(f.tag)) && !replaced.contains(&f.tag))
+            // The writer cannot encode values of unknown type.
+            .filter(|f| !matches!(f.value, Value::Unknown(..)))
             .cloned()
             .collect();
         if fields.is_empty() {
             return None;
         }
-        fields.push(Field {
-            tag: Tag::Orientation,
+        let field = |tag, value| Field {
+            tag,
             ifd_num: In::PRIMARY,
-            value: Value::Short(vec![1]),
-        });
-        fields.push(Field {
-            tag: Tag::PixelXDimension,
-            ifd_num: In::PRIMARY,
-            value: Value::Long(vec![width]),
-        });
-        fields.push(Field {
-            tag: Tag::PixelYDimension,
-            ifd_num: In::PRIMARY,
-            value: Value::Long(vec![height]),
-        });
+            value,
+        };
+        fields.push(field(Tag::Orientation, Value::Short(vec![1])));
+        fields.push(field(Tag::PixelXDimension, Value::Long(vec![width])));
+        fields.push(field(Tag::PixelYDimension, Value::Long(vec![height])));
+        if let Some(dpi) = dpi {
+            let r = exif::Rational {
+                num: (dpi * 100.0).round() as u32,
+                denom: 100,
+            };
+            fields.push(field(Tag::XResolution, Value::Rational(vec![r])));
+            fields.push(field(Tag::YResolution, Value::Rational(vec![r])));
+            fields.push(field(Tag::ResolutionUnit, Value::Short(vec![2])));
+        }
         let mut writer = exif::experimental::Writer::new();
         for field in &fields {
             writer.push_field(field);

@@ -140,9 +140,17 @@ fn alpha_about(world: &mut World, x: u32, y: u32, alpha: u8) {
 }
 
 fn compare_rotated(world: &mut World, tolerance: u8) {
+    compare_turned(world, tolerance, true);
+}
+
+fn compare_turned(world: &mut World, tolerance: u8, clockwise: bool) {
     let source = world.images.last().expect("source image").clone();
     let raw = image::open(&source).expect("open source").to_rgba8();
-    let expected = image::imageops::rotate90(&raw);
+    let expected = if clockwise {
+        image::imageops::rotate90(&raw)
+    } else {
+        image::imageops::rotate270(&raw)
+    };
     let actual = rendered(world);
     assert_eq!(actual.dimensions(), expected.dimensions());
     for (a, e) in actual.pixels().zip(expected.pixels()) {
@@ -150,9 +158,11 @@ fn compare_rotated(world: &mut World, tolerance: u8) {
     }
 }
 
-#[then("the rendered canvas is exactly the source rotated a quarter turn clockwise")]
-fn exactly_rotated(world: &mut World) {
-    compare_rotated(world, 0);
+#[then(
+    regex = r"^the rendered canvas is exactly the source rotated a quarter turn (clockwise|counterclockwise)$"
+)]
+fn exactly_rotated(world: &mut World, direction: String) {
+    compare_turned(world, 0, direction == "clockwise");
 }
 
 #[then("the rendered canvas is roughly the source rotated a quarter turn clockwise")]
@@ -211,4 +221,9 @@ fn crossfade_at(world: &mut World, percent: f64) {
 fn no_effect(world: &mut World) {
     let state = world.editor.display_state();
     assert!(state.transition_geometry(&state.transitions[0]).is_none());
+}
+
+#[then(expr = "image {int} is selected")]
+fn selected(world: &mut World, id: u32) {
+    assert_eq!(world.editor.selection().item(), Some(ItemId(id)));
 }

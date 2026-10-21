@@ -871,8 +871,12 @@ impl Editor {
         }
         let pixels = self.renderer.render(&state);
         let exif = settings.metadata.and_then(|item| {
-            self.exif_of(item)?
-                .export(&settings.groups, pixels.width(), pixels.height())
+            self.exif_of(item)?.export(
+                &settings.groups,
+                pixels.width(),
+                pixels.height(),
+                state.canvas.dpi,
+            )
         });
         let options = EncodeOptions {
             format: settings.format,

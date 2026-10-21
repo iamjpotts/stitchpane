@@ -214,10 +214,35 @@ impl Item {
         )
     }
 
+    /// Half-pixel shift applied after rotating, so odd quarter turns of a box whose sides
+    /// differ by an odd number of pixels stay pixel-aligned (PLACE-007).
+    pub fn shift(&self) -> Point {
+        match self.quarter_turns() {
+            Some(1 | 3) if (self.width + self.height) % 2 == 1 => Point::new(0.5, 0.5),
+            _ => Point::default(),
+        }
+    }
+
+    /// Canvas point of a point within the unrotated box.
+    pub fn to_canvas(&self, local: Point) -> Point {
+        let frame = self.frame();
+        let shift = self.shift();
+        let p = Point::new(frame.x + local.x, frame.y + local.y)
+            .rotated_about(frame.center(), self.rotation);
+        Point::new(p.x + shift.x, p.y + shift.y)
+    }
+
     /// Axis-aligned bounds of the item as drawn (after rotation).
     pub fn bounds(&self) -> Rect {
         let frame = self.frame();
-        rotated_bounds(frame.center(), frame.width, frame.height, self.rotation)
+        let c = frame.center();
+        let shift = self.shift();
+        rotated_bounds(
+            Point::new(c.x + shift.x, c.y + shift.y),
+            frame.width,
+            frame.height,
+            self.rotation,
+        )
     }
 
     /// Rotation normalized to `0..360`.
@@ -235,7 +260,9 @@ impl Item {
     /// Maps a canvas point to coordinates within the unrotated box.
     pub fn to_local(&self, p: Point) -> Point {
         let frame = self.frame();
-        let q = p.rotated_about(frame.center(), -self.rotation);
+        let shift = self.shift();
+        let q =
+            Point::new(p.x - shift.x, p.y - shift.y).rotated_about(frame.center(), -self.rotation);
         Point::new(q.x - frame.x, q.y - frame.y)
     }
 

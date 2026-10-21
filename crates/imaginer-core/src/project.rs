@@ -103,10 +103,19 @@ impl Project {
     /// Registers a source image, reusing an existing entry for the same path.
     pub fn add_source(&mut self, path: impl Into<PathBuf>) -> SourceId {
         let path = path.into();
-        if let Some(existing) = self.sources.iter().find(|s| s.path == path) {
-            return existing.id;
+        // Match the current (possibly relinked) path, which is what gets rendered.
+        if let Some((&id, _)) = self.state.sources.iter().find(|(_, p)| **p == path) {
+            return id;
         }
-        let id = SourceId(self.sources.iter().map(|s| s.id.0).max().unwrap_or(0) + 1);
+        let id = SourceId(
+            self.sources
+                .iter()
+                .map(|s| s.id.0)
+                .chain(self.state.sources.keys().map(|k| k.0))
+                .max()
+                .unwrap_or(0)
+                + 1,
+        );
         self.sources.push(Source {
             id,
             path: path.clone(),

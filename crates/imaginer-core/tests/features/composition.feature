@@ -223,3 +223,29 @@ Feature: Composition
     Then image 1 is rotated 12.3 degrees
     And the undo label is "Undo Rotate image"
     And the rendered canvas at 151, 176 is "transparent"
+
+  @PLACE-007
+  Scenario Outline: Quarter turns stay pixel-aligned for any size
+    Given a patterned image "q.png" of <width> by <height> pixels
+    And I open "q.png"
+    When I open the context menu on image 1
+    And I choose "<command>"
+    Then the canvas is <height> by <width> pixels
+    And the rendered canvas is exactly the source rotated a quarter turn <direction>
+
+    Examples:
+      | width | height | command                      | direction        |
+      | 31    | 20     | Rotate 90° clockwise         | clockwise        |
+      | 31    | 20     | Rotate 90° counterclockwise  | counterclockwise |
+      | 30    | 21     | Rotate 90° counterclockwise  | counterclockwise |
+      | 7     | 4      | Rotate 90° clockwise         | clockwise        |
+
+  @PLACE-002 @UNDO-004
+  Scenario: A click selects without changing anything
+    Given a composition of "a.png" and "b.png" with a custom canvas of 400 by 400 pixels
+    And the view is at 100% with the canvas origin on screen at 50, 50
+    When I drag from 200, 200 to 201, 201
+    Then the project has 2 steps
+    And image 2 is selected
+    When I drag from 400, 200 to 401, 200
+    Then the project has 2 steps

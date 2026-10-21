@@ -97,6 +97,8 @@ pub enum Modal {
         settings: ExportSettings,
         quality: String,
         sources: Vec<(ItemId, String)>,
+        /// The path the user confirmed in the file chooser.
+        picked: PathBuf,
     },
 }
 
@@ -389,6 +391,7 @@ fn open_export(app: &mut App, path: PathBuf) {
         quality: settings.quality.to_string(),
         settings,
         sources,
+        picked: path,
     });
 }
 
@@ -717,12 +720,28 @@ fn apply(app: &mut App, current: Modal) -> Task<Message> {
         }
         Modal::Exif { .. } => {}
         Modal::Export {
-            settings, quality, ..
+            settings,
+            quality,
+            picked,
+            ..
         } => {
             let mut settings = settings.clone();
             let Some(q) = num(quality) else {
                 return invalid(app, current);
             };
+            if Format::from_path(&settings.path) != Some(settings.format) {
+                settings.path.set_extension(settings.format.extensions()[0]);
+            }
+            // A changed extension is a file the user has not confirmed (EXPORT-003).
+            if settings.path != *picked
+                && (editor.export_overwrites_source(&settings.path) || settings.path.exists())
+            {
+                app.modal = Some(Modal::Error(format!(
+                    "{} already exists. Export again and choose that name to replace it.",
+                    settings.path.display()
+                )));
+                return Task::none();
+            }
             settings.quality = q.clamp(1.0, 100.0) as u8;
             if let Err(e) = editor.export(&settings) {
                 app.modal = Some(Modal::Error(e));
@@ -1044,6 +1063,7 @@ pub fn view<'a>(_app: &'a App, current: &'a Modal) -> Element<'a, Message> {
             settings,
             quality,
             sources,
+            ..
         } => {
             let formats = Format::WRITABLE.map(|f| f.label().to_owned()).to_vec();
             let mut names = vec!["None".to_owned()];

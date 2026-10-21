@@ -189,3 +189,7 @@ change as needed.
   and opens or removes existing ones.
 - The rotation handle sits 28 screen pixels above the top edge. Angles are stored to 0.1°
   and normalized to 0–360.
+- A press must move 3 screen pixels before it counts as a drag; a plain click only
+  selects.
+- An odd quarter turn of an image whose width and height differ by an odd number of pixels
+  is shifted by half a pixel so it stays on whole pixels and is not resampled.

@@ -230,8 +230,9 @@ impl Renderer {
             let frame = item.frame();
             let center = frame.center();
             let (sin, cos) = (-item.rotation).to_radians().sin_cos();
+            let shift = item.shift();
             let to_local = |p: Point| {
-                let (dx, dy) = (p.x - center.x, p.y - center.y);
+                let (dx, dy) = (p.x - shift.x - center.x, p.y - shift.y - center.y);
                 Point::new(
                     center.x + dx * cos - dy * sin - frame.x,
                     center.y + dx * sin + dy * cos - frame.y,

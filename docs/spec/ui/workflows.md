@@ -79,3 +79,5 @@ Right-clicking an item or transition shall open a menu of the actions that apply
   submenus), GTK file choosers and dialogs.
 - The iced build has File, Edit, View and Image menus in its header, draws its dialogs
   inside the window, and uses the desktop file chooser through the XDG portal.
+- iced does not report where files are dropped, so in the iced build dropped files are
+  placed as "Add images…" places them.

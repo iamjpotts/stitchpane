@@ -131,6 +131,8 @@ fn context_menu_starts_cropping() {
     click(&mut app, "Crop");
     assert!(app.editor.crop_tool().is_some());
     assert!(shows(&app, "Apply"));
+    let _ = app.update(Message::CropField(2, String::new()));
+    assert_eq!(app.crop_fields[2], "");
     let _ = app.update(Message::CropField(2, "100".to_owned()));
     click(&mut app, "Apply");
     assert!(app.editor.crop_tool().is_none());
@@ -203,8 +205,11 @@ fn dropping_files_adds_images() {
     let a = dir.image("a.png", 40, 30, None);
     let b = dir.image("b.png", 20, 20, None);
     let mut app = app_with(&[&a]);
+    let c = dir.image("c.png", 20, 20, None);
     let _ = app.update(Message::FileDropped(b));
-    assert_eq!(app.editor.project().state().items.len(), 2);
+    let _ = app.update(Message::FileDropped(c));
+    let _ = app.update(Message::FlushDrops);
+    assert_eq!(app.editor.project().state().items.len(), 3);
 }
 
 #[test]
