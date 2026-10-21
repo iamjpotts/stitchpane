@@ -1,0 +1,13 @@
+[package]
+name = "imaginer-iced"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+iced.workspace = true
+imaginer-core.workspace = true
+
+[lints]
+workspace = true

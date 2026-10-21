@@ -1,0 +1,18 @@
+[package]
+name = "imaginer"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+default = ["gtk"]
+gtk = ["dep:imaginer-gtk"]
+iced = ["dep:imaginer-iced"]
+
+[dependencies]
+imaginer-gtk = { workspace = true, optional = true }
+imaginer-iced = { workspace = true, optional = true }
+
+[lints]
+workspace = true

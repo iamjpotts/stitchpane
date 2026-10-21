@@ -1,31 +1,80 @@
+[graph]
+# check every UI backend's dependency tree, not just the default feature's
+all-features = true
+
 [advisories]
 ignore = [
+    "RUSTSEC-2024-0436", # paste unmaintained; iced -> wgpu-core (non-Linux targets only)
+    "RUSTSEC-2026-0192", # ttf-parser unmaintained; iced -> cosmic-text/fontdb text rendering
+    "RUSTSEC-2026-0370", # zvariant merged into zbus; iced -> iced_winit -> mundy -> zbus
+    "RUSTSEC-2026-0371", # zbus_names merged into zbus; iced -> iced_winit -> mundy -> zbus
+    "RUSTSEC-2026-0372", # zvariant_derive merged into zbus; iced -> iced_winit -> mundy -> zbus
 ]
 version = 2
 
 [licenses]
 allow = [
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
     "MIT",
-    "MPL-2.0",
     "Unicode-3.0",
     "Unlicense",
     "Zlib",
 ]
 confidence-threshold = 0.9
 private = { ignore = true }
+unused-allowed-license = "deny"
 version = 2
 
 [bans]
 allow = []
 deny = []
 multiple-versions = "deny"
-skip = []
+# Each entry skips an older version; the comment names the direct dependency (and the
+# crate within its tree) that still requires it.
+skip = [
+    { crate = "bitflags@1.3.2" },               # iced: core-graphics (macOS), redox_syscall 0.4 (Redox)
+    { crate = "block2@0.5.1" },                 # iced: winit, objc2 0.2 family (macOS)
+    { crate = "calloop@0.13.0" },               # iced: winit, smithay-client-toolkit 0.19
+    { crate = "calloop-wayland-source@0.3.0" }, # iced: smithay-client-toolkit 0.19 (via winit)
+    { crate = "core-foundation@0.9.4" },        # iced: winit, core-graphics (macOS)
+    { crate = "core-graphics-types@0.1.3" },    # iced: core-graphics (macOS)
+    { crate = "foldhash@0.1.5" },               # iced: hashbrown 0.15 (via gpu-descriptor)
+    { crate = "font-types@0.10.1" },            # iced: read-fonts 0.35 (via cosmic-text/harfrust)
+    { crate = "getrandom@0.3.4" },              # iced: ahash
+    { crate = "hashbrown@0.15.5" },             # iced: gpu-descriptor (via wgpu)
+    { crate = "hashbrown@0.16.1" },             # iced: wgpu, naga
+    { crate = "jni-sys@0.3.1" },                # iced: ndk (Android)
+    { crate = "linux-raw-sys@0.4.15" },         # iced: rustix 0.38 (via winit, calloop 0.13)
+    { crate = "objc2@0.5.3" },                  # iced: winit, objc2 0.2 family (macOS)
+    { crate = "objc2-app-kit@0.2.2" },          # iced: winit, clipboard_macos (macOS)
+    { crate = "objc2-foundation@0.2.2" },       # iced: winit, clipboard_macos (macOS)
+    { crate = "r-efi@5.3.0" },                  # iced: getrandom 0.3 (via ahash; UEFI)
+    { crate = "read-fonts@0.35.0" },            # iced: cosmic-text (via harfrust, skrifa 0.37)
+    { crate = "redox_syscall@0.4.1" },          # iced: winit (Redox)
+    { crate = "redox_syscall@0.5.18" },         # iced: parking_lot_core, softbuffer (Redox)
+    { crate = "rustc-hash@1.1.0" },             # iced: cosmic-text, naga, wgpu-core
+    { crate = "rustix@0.38.44" },               # iced: winit, calloop 0.13, smithay-client-toolkit 0.19
+    { crate = "skrifa@0.37.0" },                # iced: cosmic-text
+    { crate = "smithay-client-toolkit@0.19.2" }, # iced: winit, sctk-adwaita
+    { crate = "syn@2.0.119" },                  # cucumber and iced: many proc-macro crates still on syn 2
+    { crate = "thiserror@1.0.69" },             # iced: calloop 0.13, smithay-client-toolkit 0.19, ndk, gpu-allocator
+    { crate = "thiserror-impl@1.0.69" },        # iced: thiserror 1 (see above)
+    { crate = "windows@0.58.0" },               # iced: wgpu-hal, gpu-allocator (Windows)
+    { crate = "windows-core@0.58.0" },          # iced: wgpu-hal, windows 0.58 (Windows)
+    { crate = "windows-implement@0.58.0" },     # iced: windows-core 0.58 (Windows)
+    { crate = "windows-interface@0.58.0" },     # iced: windows-core 0.58 (Windows)
+    { crate = "windows-result@0.2.0" },         # iced: windows-core 0.58 (Windows)
+    { crate = "windows-strings@0.1.0" },        # iced: windows-core 0.58 (Windows)
+]
 skip-tree = [
-    # do not care about windows; not in use
-    { name = "windows-sys" }
+    # Windows-only; 0.52 from iced (winit), 0.59 from iced (rustix 0.38), 0.61 from many
+    { crate = "windows-sys" },
 ]
 
 wildcards = "deny"

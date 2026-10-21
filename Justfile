@@ -3,13 +3,19 @@ default:
     @just -l
 
 install:
-    @cargo install --path .
+    @cargo install --path crates/imaginer
+
+# run the app; pass `iced` to use the iced UI instead of GTK
+run ui="gtk":
+    @cargo run -p imaginer --no-default-features --features {{ui}}
 
 check:
-    @cargo check --all-targets
+    @cargo check --workspace --all-targets
+    @cargo check -p imaginer --all-targets --no-default-features --features iced
 
 clippy:
-    @cargo clippy
+    @cargo clippy --workspace --all-targets -- -D warnings
+    @cargo clippy -p imaginer --all-targets --no-default-features --features iced -- -D warnings
 
 deny:
     @cargo deny check
@@ -20,8 +26,11 @@ fmt:
 fmt-check:
     @cargo +nightly fmt --check
 
-t:
-    cargo test
+# every Implemented requirement has a test; every test tag names a known requirement
+spec-check:
+    @scripts/spec-check.sh
 
-verify: fmt-check deny check clippy t
-    
+t:
+    cargo test --workspace
+
+verify: fmt-check deny check clippy spec-check t

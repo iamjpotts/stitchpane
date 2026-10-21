@@ -1,0 +1,19 @@
+[package]
+name = "imaginer-core"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+cucumber.workspace = true
+futures.workspace = true
+
+[[test]]
+name = "features"
+harness = false
+
+[lints]
+workspace = true
