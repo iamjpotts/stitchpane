@@ -18,13 +18,13 @@ GNOME conventions (header bar, primary menu).
 ```
 
 ### UI-005: One interface
-Status: Draft
+Status: Accepted
 
 Single images and compositions shall use the same window and tools; there is no
 separate single-image mode. Revisit if this proves awkward in use.
 
 ### UI-006: Fine adjustment with the keyboard
-Status: Draft
+Status: Accepted
 
 The arrow keys shall adjust whatever is selected by 1 pixel, or 10 pixels with Shift:
 
@@ -37,25 +37,25 @@ Each run of key presses on the same target records one step when the user moves 
 something else (UNDO-004).
 
 ### UI-001: Open an image or project
-Status: Draft
+Status: Accepted
 
 Open shall accept both images and `.imaginer` project files. Opening an image starts a
 single-image project.
 
 ### UI-002: Unsaved changes
-Status: Draft
+Status: Accepted
 
 If the user closes a window or opens another project with unsaved changes, then the
 system shall offer Save, Discard, or Cancel.
 
 ### UI-003: Zoom
-Status: Draft
+Status: Accepted
 
 The canvas shall zoom with Ctrl+scroll, Ctrl+plus, Ctrl+minus, Ctrl+0 (fit) and Ctrl+1
 (100%).
 
 ### UI-004: Context menus
-Status: Draft
+Status: Accepted
 
 Right-clicking an item or transition shall open a menu of the actions that apply to it
 (PLACE-005, BLEND-003, crop, resize).
