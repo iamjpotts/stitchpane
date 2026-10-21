@@ -117,3 +117,18 @@ Feature: Project file
     When I undo
     And I undo
     Then the undo label is "Undo Add image"
+
+  @PROJ-005
+  Scenario: Missing sources are labeled and can be located
+    Given a new project
+    And an image "photos/left.png" of 40 by 30 pixels added to the project
+    And a "blue" image "elsewhere/left.png" of 40 by 30 pixels
+    When I save the project as "trip.imaginer"
+    And the file "photos/left.png" is deleted
+    And I open "trip.imaginer"
+    Then image 1 is labeled "Missing: left.png"
+    And the rendered canvas at 20, 15 is gray
+    When I locate source 1 at "elsewhere/left.png"
+    Then no sources are missing
+    And the rendered canvas at 20, 15 is "blue"
+    And the undo label is "Undo Locate source"

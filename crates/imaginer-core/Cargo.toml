@@ -18,6 +18,8 @@ yaml_serde.workspace = true
 cucumber.workspace = true
 futures.workspace = true
 image.workspace = true
+kamadak-exif.workspace = true
+tiff.workspace = true
 yaml_serde.workspace = true
 
 [[test]]

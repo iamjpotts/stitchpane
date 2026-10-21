@@ -129,6 +129,7 @@ impl Renderer {
         item: &Item,
         width: u32,
         height: u32,
+        filter: Filter,
     ) -> Option<Arc<RgbaImage>> {
         let path = state.sources.get(&item.source)?.clone();
         let source = self.source(&path).ok()?;
@@ -136,7 +137,7 @@ impl Renderer {
             crop: item.crop,
             width,
             height,
-            filter: item.filter,
+            filter,
         }
         .bits();
         if let Some((cached, pixels)) = self.items.get(&(path.clone(), item.id))
@@ -158,38 +159,63 @@ impl Renderer {
         let pixels = if cropped.dimensions() == (width, height) {
             cropped
         } else {
-            image::imageops::resize(&cropped, width, height, filter_type(item.filter))
+            image::imageops::resize(&cropped, width, height, filter_type(filter))
         };
         let pixels = Arc::new(pixels);
         self.items.insert((path, item.id), (key, pixels.clone()));
         Some(pixels)
     }
 
-    /// Renders the whole canvas at `scale` (1.0 for export).
-    pub fn render(&mut self, state: &ProjectState, scale: f64) -> RgbaImage {
+    /// Renders the whole canvas at full size, for export.
+    pub fn render(&mut self, state: &ProjectState) -> RgbaImage {
         let canvas = state.canvas_rect();
-        let width = ((canvas.width * scale).round() as u32).max(1);
-        let height = ((canvas.height * scale).round() as u32).max(1);
+        let width = (canvas.width.round() as u32).max(1);
+        let height = (canvas.height.round() as u32).max(1);
+        self.render_region(state, canvas, width, height, 1.0, false)
+    }
+
+    /// Renders the canvas area `region` (canvas coordinates) into a `width` × `height`
+    /// image, `scale` output pixels per canvas pixel. Areas without items are
+    /// transparent. `preview` trades resampling quality for speed.
+    pub fn render_region(
+        &mut self,
+        state: &ProjectState,
+        region: Rect,
+        width: u32,
+        height: u32,
+        scale: f64,
+        preview: bool,
+    ) -> RgbaImage {
         let mut out = vec![[0f32; 4]; width as usize * height as usize];
+        // Items are resampled to at most their full size; larger zooms sample from that.
+        let prepared_scale = scale.min(1.0);
 
         for (index, item) in state.items.iter().enumerate() {
-            let effects = effects_on(state, index);
-            let scaled_w = ((f64::from(item.width) * scale).round() as u32).max(1);
-            let scaled_h = ((f64::from(item.height) * scale).round() as u32).max(1);
-            let pixels = self.item_pixels(state, item, scaled_w, scaled_h);
-            let exact = item.quarter_turns().is_some();
             let bounds = item.bounds();
-            let x0 = (((bounds.x - canvas.x) * scale).floor().max(0.0)) as u32;
-            let y0 = (((bounds.y - canvas.y) * scale).floor().max(0.0)) as u32;
-            let x1 = ((((bounds.right() - canvas.x) * scale).ceil()) as u32).min(width);
-            let y1 = ((((bounds.bottom() - canvas.y) * scale).ceil()) as u32).min(height);
+            let Some(visible) = bounds.intersection(&region) else {
+                continue;
+            };
+            let effects = effects_on(state, index);
+            let scaled_w = ((f64::from(item.width) * prepared_scale).round() as u32).max(1);
+            let scaled_h = ((f64::from(item.height) * prepared_scale).round() as u32).max(1);
+            let filter = if preview && prepared_scale < 1.0 {
+                Filter::Bilinear
+            } else {
+                item.filter
+            };
+            let pixels = self.item_pixels(state, item, scaled_w, scaled_h, filter);
+            let exact = item.quarter_turns().is_some();
+            let x0 = ((visible.x - region.x) * scale).floor().max(0.0) as u32;
+            let y0 = ((visible.y - region.y) * scale).floor().max(0.0) as u32;
+            let x1 = (((visible.right() - region.x) * scale).ceil() as u32).min(width);
+            let y1 = (((visible.bottom() - region.y) * scale).ceil() as u32).min(height);
             let sx = f64::from(scaled_w) / f64::from(item.width);
             let sy = f64::from(scaled_h) / f64::from(item.height);
             for py in y0..y1 {
                 for px in x0..x1 {
                     let p = Point::new(
-                        canvas.x + (f64::from(px) + 0.5) / scale,
-                        canvas.y + (f64::from(py) + 0.5) / scale,
+                        region.x + (f64::from(px) + 0.5) / scale,
+                        region.y + (f64::from(py) + 0.5) / scale,
                     );
                     let local = item.to_local(p);
                     let (lx, ly) = (local.x * sx, local.y * sy);
@@ -201,7 +227,12 @@ impl Renderer {
                                 sample_bilinear(pixels, lx, ly)
                             }
                         }
-                        None => placeholder(lx, ly, f64::from(scaled_w), f64::from(scaled_h)),
+                        None => placeholder(
+                            local.x,
+                            local.y,
+                            f64::from(item.width),
+                            f64::from(item.height),
+                        ),
                     };
                     let Some(mut color) = color else { continue };
                     color[3] *= opacity(item, &effects, p) as f32;
@@ -216,8 +247,12 @@ impl Renderer {
 
         let mut image = RgbaImage::new(width, height);
         for (pixel, value) in image.pixels_mut().zip(out) {
-            let a = value[3];
-            *pixel = Rgba([to_u8(value[0]), to_u8(value[1]), to_u8(value[2]), to_u8(a)]);
+            *pixel = Rgba([
+                to_u8(value[0]),
+                to_u8(value[1]),
+                to_u8(value[2]),
+                to_u8(value[3]),
+            ]);
         }
         image
     }

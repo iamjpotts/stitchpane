@@ -2,6 +2,7 @@
 //! depends on no UI toolkit.
 
 pub mod codec;
+pub mod editor;
 pub mod geometry;
 pub mod metadata;
 pub mod model;

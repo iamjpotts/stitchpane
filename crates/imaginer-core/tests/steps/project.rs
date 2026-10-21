@@ -1,9 +1,8 @@
 use cucumber::gherkin::Step as GherkinStep;
 use cucumber::{given, then, when};
+use imaginer_core::editor::{CanvasChoice, Editor, Preset};
 use imaginer_core::model::{ItemId, SourceId, Step};
-use imaginer_core::project::Project;
-use imaginer_core::project_file;
-use imaginer_core::render::{Renderer, SourceProblem};
+use imaginer_core::render::SourceProblem;
 
 use super::{World, ensure_parent};
 
@@ -14,40 +13,33 @@ fn yaml(world: &World, file: &str) -> yaml_serde::Value {
 
 #[given("a new project")]
 fn new_project(world: &mut World) {
-    world.project = Project::new();
+    world.editor = Editor::new();
+    world.editor.set_viewport(1000.0, 800.0);
 }
 
 #[given(expr = "an image {string} of {int} by {int} pixels added to the project")]
 fn add_image(world: &mut World, file: String, width: u32, height: u32) {
     let path = world.path(&file);
-    ensure_parent(&path);
-    image::RgbaImage::from_pixel(width, height, image::Rgba([200, 100, 50, 255]))
-        .save(&path)
-        .expect("write test image");
-    let source = world.project.add_source(path);
-    let id = world.project.state().next_item_id();
-    world
-        .project
-        .apply(Step::AddItem {
-            id,
-            source,
-            x: 0,
-            y: 0,
-            source_width: width,
-            source_height: height,
-        })
-        .expect("add image");
-    world.item = Some(id);
+    super::files::write_solid(world, &path, width, height, [200, 100, 50, 255]);
+    world.editor.add_images(&[path], None).expect("add image");
+    world.item = world.editor.project().state().items.last().map(|i| i.id);
 }
 
 #[given(expr = "the image is moved to {int}, {int}")]
 #[when(expr = "the image is moved to {int}, {int}")]
 fn move_image(world: &mut World, x: i32, y: i32) {
     let item = world.item();
-    world
-        .project
-        .apply(Step::MoveItem { item, x, y })
-        .expect("move image");
+    assert!(world.editor.apply(Step::MoveItem { item, x, y }));
+}
+
+#[given(expr = "image {int} is moved to {int}, {int}")]
+#[when(expr = "image {int} is moved to {int}, {int}")]
+fn move_item(world: &mut World, id: u32, x: i32, y: i32) {
+    assert!(world.editor.apply(Step::MoveItem {
+        item: ItemId(id),
+        x,
+        y
+    }));
 }
 
 #[given(expr = "a project file {string} containing:")]
@@ -59,22 +51,119 @@ fn project_file_containing(world: &mut World, file: String, step: &GherkinStep) 
     world.snapshots.push((path, text.as_bytes().to_vec()));
 }
 
+#[given(expr = "I save the project as {string}")]
 #[when(expr = "I save the project as {string}")]
 fn save_as(world: &mut World, file: String) {
     let path = world.path(&file);
     ensure_parent(&path);
-    project_file::save(&mut world.project, &path).expect("save project");
+    world.editor.save_as(&path).expect("save project");
 }
 
+#[given(expr = "I open {string}")]
 #[when(expr = "I open {string}")]
 fn open(world: &mut World, file: String) {
-    match project_file::load(&world.path(&file)) {
-        Ok(project) => {
-            world.project = project;
+    match world.editor.open(&world.path(&file)) {
+        Ok(()) => {
             world.error = None;
+            world.item = world.editor.project().state().items.last().map(|i| i.id);
         }
-        Err(e) => world.error = Some(e.to_string()),
+        Err(e) => world.error = Some(e),
     }
+}
+
+fn open_together(world: &mut World, files: &[String]) {
+    let paths: Vec<_> = files.iter().map(|f| world.path(f)).collect();
+    world.editor.open_images(&paths).expect("open images");
+}
+
+#[when(expr = "I open {string} and {string} together")]
+fn open_two(world: &mut World, a: String, b: String) {
+    open_together(world, &[a, b]);
+}
+
+#[when(expr = "I open {string}, {string} and {string} together")]
+fn open_three(world: &mut World, a: String, b: String, c: String) {
+    open_together(world, &[a, b, c]);
+}
+
+fn choice_named(name: &str) -> CanvasChoice {
+    let fixed = [
+        CanvasChoice::SideBySide,
+        CanvasChoice::Stacked,
+        CanvasChoice::Largest,
+    ];
+    fixed
+        .into_iter()
+        .chain(Preset::ALL.map(CanvasChoice::Preset))
+        .find(|c| c.label() == name)
+        .unwrap_or_else(|| panic!("no canvas choice {name}"))
+}
+
+fn compose(world: &mut World, files: &[&str], choice: CanvasChoice) {
+    let paths: Vec<_> = files.iter().map(|f| world.path(f)).collect();
+    world
+        .editor
+        .new_composition(&paths, Some(choice))
+        .expect("create composition");
+}
+
+#[given(expr = "a composition of {string} and {string} side by side")]
+fn composition_side_by_side(world: &mut World, a: String, b: String) {
+    compose(world, &[&a, &b], CanvasChoice::SideBySide);
+}
+
+#[given(expr = "a composition of {string} and {string} with canvas {string}")]
+#[when(expr = "I create a composition of {string} and {string} with canvas {string}")]
+fn composition_with(world: &mut World, a: String, b: String, choice: String) {
+    compose(world, &[&a, &b], choice_named(&choice));
+}
+
+#[given(
+    regex = r#"^a composition of "([^"]+)" and "([^"]+)" with a custom canvas of (\d+) by (\d+) pixels(?: at (\d+) DPI)?$"#
+)]
+#[when(
+    regex = r#"^I create a composition of "([^"]+)" and "([^"]+)" with a custom canvas of (\d+) by (\d+) pixels(?: at (\d+) DPI)?$"#
+)]
+fn composition_custom(world: &mut World, a: String, b: String, w: u32, h: u32, dpi: String) {
+    let dpi = dpi.parse::<f64>().ok();
+    compose(
+        world,
+        &[&a, &b],
+        CanvasChoice::Custom {
+            width: w,
+            height: h,
+            dpi,
+        },
+    );
+}
+
+#[given(expr = "a composition of {string} with a custom canvas of {int} by {int} pixels")]
+fn composition_single(world: &mut World, a: String, w: u32, h: u32) {
+    compose(
+        world,
+        &[&a],
+        CanvasChoice::Custom {
+            width: w,
+            height: h,
+            dpi: None,
+        },
+    );
+}
+
+#[when(expr = "I add {string}")]
+fn add(world: &mut World, file: String) {
+    let path = world.path(&file);
+    world.editor.add_images(&[path], None).expect("add image");
+}
+
+#[when(expr = "I drop {string} on the canvas at {int}, {int}")]
+fn drop_at(world: &mut World, file: String, x: f64, y: f64) {
+    let path = world.path(&file);
+    let at = world.screen(x, y);
+    world
+        .editor
+        .add_images(&[path], Some(at))
+        .expect("drop image");
 }
 
 #[when(expr = "the file {string} is deleted")]
@@ -82,14 +171,20 @@ fn delete_file(world: &mut World, file: String) {
     std::fs::remove_file(world.path(&file)).expect("delete file");
 }
 
+#[when(expr = "I locate source {int} at {string}")]
+fn locate(world: &mut World, id: u32, file: String) {
+    let path = world.path(&file);
+    assert!(world.editor.relink(SourceId(id), &path));
+}
+
 #[when("I undo")]
 fn undo(world: &mut World) {
-    assert!(world.project.undo(), "nothing to undo");
+    assert!(world.editor.undo(), "nothing to undo");
 }
 
 #[when("I redo")]
 fn redo(world: &mut World) {
-    assert!(world.project.redo(), "nothing to redo");
+    assert!(world.editor.redo(), "nothing to redo");
 }
 
 #[then(expr = "opening fails with a message containing {string}")]
@@ -100,6 +195,7 @@ fn error_contains(world: &mut World, text: String) {
 }
 
 #[then(expr = "{string} is unchanged")]
+#[then(expr = "{string} is unchanged on disk")]
 fn unchanged(world: &mut World, file: String) {
     let path = world.path(&file);
     let (_, before) = world
@@ -137,51 +233,78 @@ fn file_steps(world: &mut World, file: String, count: usize) {
 
 #[then(expr = "the project's source {int} is the file {string}")]
 fn source_is(world: &mut World, id: u32, file: String) {
-    let source = world.project.source(SourceId(id)).expect("source");
+    let source = world.editor.project().source(SourceId(id)).expect("source");
     assert_eq!(source.path, world.path(&file));
 }
 
 #[then(expr = "the project has {int} sources")]
 fn source_count(world: &mut World, count: usize) {
-    assert_eq!(world.project.sources().len(), count);
+    assert_eq!(world.editor.project().sources().len(), count);
 }
 
 #[then(expr = "the project has {int} steps")]
 fn step_count(world: &mut World, count: usize) {
-    assert_eq!(world.project.steps().len(), count);
+    assert_eq!(world.editor.project().steps().len(), count);
+}
+
+#[then(expr = "the project has {int} images")]
+fn image_count(world: &mut World, count: usize) {
+    assert_eq!(world.editor.display_state().items.len(), count);
 }
 
 #[then(expr = "source {int} is missing")]
 fn source_missing(world: &mut World, id: u32) {
-    let problems = Renderer::new().problems(world.project.state());
+    let missing = world.editor.missing_sources();
     assert!(
-        problems.contains(&(SourceId(id), SourceProblem::Missing)),
-        "{problems:?}"
+        missing
+            .iter()
+            .any(|(s, _, p)| *s == SourceId(id) && *p == SourceProblem::Missing),
+        "{missing:?}"
     );
 }
 
-#[then(expr = "image {int} is at {int}, {int}")]
-fn image_at(world: &mut World, id: u32, x: i32, y: i32) {
-    let item = world.project.state().item(ItemId(id)).expect("image");
-    assert_eq!((item.x, item.y), (x, y));
+#[then("no sources are missing")]
+fn none_missing(world: &mut World) {
+    assert!(world.editor.missing_sources().is_empty());
+}
+
+#[then(expr = "image {int} is labeled {string}")]
+fn labeled(world: &mut World, _id: u32, text: String) {
+    let labels = world.editor.labels();
+    assert!(labels.iter().any(|(_, t)| *t == text), "{labels:?}");
 }
 
 #[then(expr = "the undo label is {string}")]
 fn undo_label(world: &mut World, label: String) {
-    assert_eq!(world.project.undo_label().as_deref(), Some(label.as_str()));
+    assert_eq!(world.editor.undo_label().as_deref(), Some(label.as_str()));
 }
 
 #[then(expr = "the redo label is {string}")]
 fn redo_label(world: &mut World, label: String) {
-    assert_eq!(world.project.redo_label().as_deref(), Some(label.as_str()));
+    assert_eq!(world.editor.redo_label().as_deref(), Some(label.as_str()));
 }
 
 #[then("there is nothing to undo")]
 fn nothing_to_undo(world: &mut World) {
-    assert_eq!(world.project.undo_label(), None);
+    assert_eq!(world.editor.undo_label(), None);
 }
 
 #[then("there is nothing to redo")]
 fn nothing_to_redo(world: &mut World) {
-    assert_eq!(world.project.redo_label(), None);
+    assert_eq!(world.editor.redo_label(), None);
+}
+
+#[then(expr = "the title is {string}")]
+fn title_is(world: &mut World, title: String) {
+    assert_eq!(world.editor.title(), title);
+}
+
+#[then("there are unsaved changes")]
+fn unsaved(world: &mut World) {
+    assert!(world.editor.needs_save_prompt());
+}
+
+#[then("there are no unsaved changes")]
+fn saved(world: &mut World) {
+    assert!(!world.editor.needs_save_prompt());
 }

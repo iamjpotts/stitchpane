@@ -296,6 +296,7 @@ pub enum Step {
         /// Items move by this much, so space can be added on the left or top.
         offset_x: i32,
         offset_y: i32,
+        dpi: Option<f64>,
     },
     SetDpi {
         dpi: Option<f64>,
@@ -689,8 +690,13 @@ impl ProjectState {
                 height,
                 offset_x,
                 offset_y,
+                dpi,
             } => {
                 check_size(width, height)?;
+                if let Some(dpi) = dpi {
+                    check_dpi(dpi)?;
+                }
+                self.canvas.dpi = dpi;
                 self.canvas.size = CanvasSize::Fixed { width, height };
                 for item in &mut self.items {
                     item.x += offset_x;
