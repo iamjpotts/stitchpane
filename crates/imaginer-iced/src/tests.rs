@@ -226,3 +226,20 @@ fn snapshot_for_inspection() {
     let _ = std::fs::remove_file(&path);
     snapshot.matches_image(path).expect("write");
 }
+
+#[test]
+fn edit_menu_names_the_steps() {
+    // spec: UNDO-001, UNDO-003
+    let dir = Scratch::new("editmenu");
+    let a = dir.image("a.png", 40, 30, None);
+    let mut app = app_with(&[&a]);
+    assert!(app.editor.apply(Step::MoveItem {
+        item: ItemId(1),
+        x: 5,
+        y: 5
+    }));
+    click(&mut app, "Edit");
+    assert!(shows(&app, "Undo Move image  (Ctrl+Z)"));
+    click(&mut app, "Undo Move image  (Ctrl+Z)");
+    assert_eq!((item(&app, 1).x, item(&app, 1).y), (0, 0));
+}

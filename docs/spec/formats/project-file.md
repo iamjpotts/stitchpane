@@ -9,40 +9,40 @@ Status: Implemented
 A new project shall have no sources and no steps.
 
 ### PROJ-002: Encoding
-Status: Accepted
+Status: Implemented
 
 A project file shall be UTF-8 YAML with the extension `.imaginer`.
 
 ### PROJ-003: Format version
-Status: Accepted
+Status: Implemented
 
 A project file shall have a top-level integer `version`, currently `1`. If a file's
 version is newer than the application supports, then opening it shall fail with a
 message naming both versions, and the file shall not be changed.
 
 ### PROJ-004: Relative source paths
-Status: Accepted
+Status: Implemented
 
 Source paths shall be stored relative to the directory containing the project file,
 using `/` as the separator, including paths that need `..`. When a project is saved to
 a new location, paths shall be rewritten relative to the new location.
 
 ### PROJ-005: Missing sources
-Status: Accepted
+Status: Implemented
 
 If a source file is missing when a project is opened, then the project shall still
 open, each item using that source shall be drawn as a labeled placeholder, and the user
 shall be offered to locate the file. Locating it updates the source path.
 
 ### PROJ-006: Replay
-Status: Accepted
+Status: Implemented
 
 Steps shall be stored in the order they were applied, one entry per step; consecutive
 steps are never merged. Opening a project shall replay them in order to produce the same
 result as before saving.
 
 ### PROJ-008: Redo history
-Status: Accepted
+Status: Implemented
 
 Undone steps that can still be redone shall be saved in a `redo` list, ordered so that
 the first entry is the next to be redone. Opening a project shall restore them as the
@@ -50,7 +50,7 @@ redo history without applying them. Undo history needs no extra storage: it is t
 `steps` list.
 
 ### PROJ-007: Unknown fields
-Status: Accepted
+Status: Implemented
 
 If a project file has a field or step type the application does not recognize, then
 opening it shall fail with a message naming it, rather than silently dropping data.
@@ -93,3 +93,8 @@ redo:
 | `set_feather` | BLEND-007 |
 | `strip_metadata` | META-004 |
 | `relink_source` | PROJ-005 |
+
+## Implementation notes
+
+- IDs are numbers. `canvas` is `{ size: fit }` (the canvas follows the images) or
+  `{ size: { fixed: { width, height } } }`, plus an optional `dpi`.

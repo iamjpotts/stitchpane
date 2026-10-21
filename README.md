@@ -40,3 +40,9 @@ Ubuntu 24.04 or later.
 # Building
 
 `just install` builds the GTK version. `just run iced` runs the iced version.
+
+# Usage
+
+`imaginer [image or project files…]`. Several images start a composition. Drag images to
+move them, use the handles to resize and rotate, and right-click images, seams and the
+canvas for more. The arrow keys, `[` and `]` make fine adjustments.

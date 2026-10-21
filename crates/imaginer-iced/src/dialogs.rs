@@ -316,6 +316,7 @@ pub fn run(app: &mut App, command: Command) -> Task<Message> {
                 return Task::none();
             }
             let current = item
+                .or_else(|| app.editor.exif_viewer_item())
                 .filter(|i| items.iter().any(|(id, _)| id == i))
                 .unwrap_or(items[0].0);
             let entries = app.editor.exif_entries(current);

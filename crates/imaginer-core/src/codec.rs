@@ -99,7 +99,10 @@ impl Format {
 
     /// Whether export writes DPI metadata for this format (EXPORT-002).
     pub fn supports_dpi(self) -> bool {
-        matches!(self, Format::Png | Format::Jpeg | Format::Tiff)
+        matches!(
+            self,
+            Format::Png | Format::Jpeg | Format::Tiff | Format::Bmp
+        )
     }
 
     /// Whether export writes EXIF metadata for this format (META-005).
@@ -288,6 +291,15 @@ pub fn encode(image: &RgbaImage, options: &EncodeOptions) -> Result<Vec<u8>, Cod
             image::codecs::bmp::BmpEncoder::new(&mut writer)
                 .write_image(rgb.as_raw(), w, h, image::ExtendedColorType::Rgb8)
                 .map_err(|e| err(&e))?;
+            drop(writer);
+            if let Some(dpi) = options.dpi {
+                // BITMAPINFOHEADER resolution fields, pixels per meter.
+                let ppm = ((dpi / 0.0254).round() as i32).to_le_bytes();
+                if out.len() >= 46 {
+                    out[38..42].copy_from_slice(&ppm);
+                    out[42..46].copy_from_slice(&ppm);
+                }
+            }
         }
         Format::Gif => return Err(err(&"GIF export is not supported")),
         Format::Heif | Format::Avif => {

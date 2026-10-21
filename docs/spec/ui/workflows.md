@@ -18,13 +18,13 @@ GNOME conventions (header bar, primary menu).
 ```
 
 ### UI-005: One interface
-Status: Accepted
+Status: Implemented
 
 Single images and compositions shall use the same window and tools; there is no
 separate single-image mode. Revisit if this proves awkward in use.
 
 ### UI-006: Fine adjustment with the keyboard
-Status: Accepted
+Status: Implemented
 
 The arrow keys shall adjust whatever is selected by 1 pixel, or 10 pixels with Shift:
 
@@ -37,25 +37,25 @@ Each run of key presses on the same target records one step when the user moves 
 something else (UNDO-004).
 
 ### UI-001: Open an image or project
-Status: Accepted
+Status: Implemented
 
 Open shall accept both images and `.imaginer` project files. Opening an image starts a
 single-image project.
 
 ### UI-002: Unsaved changes
-Status: Accepted
+Status: Implemented
 
 If the user closes a window or opens another project with unsaved changes, then the
 system shall offer Save, Discard, or Cancel.
 
 ### UI-003: Zoom
-Status: Accepted
+Status: Implemented
 
 The canvas shall zoom with Ctrl+scroll, Ctrl+plus, Ctrl+minus, Ctrl+0 (fit) and Ctrl+1
 (100%).
 
 ### UI-004: Context menus
-Status: Accepted
+Status: Implemented
 
 Right-clicking an item or transition shall open a menu of the actions that apply to it
 (PLACE-005, BLEND-003, crop, resize).
@@ -72,3 +72,10 @@ Right-clicking an item or transition shall open a menu of the actions that apply
 | Move / resize selection | Arrows / Ctrl+Arrows (Shift: 10 px) |
 | Rotate selection | `[` / `]` (0.1°; Shift: 1°) |
 | Disable snapping while dragging | Hold Alt |
+
+## Implementation notes
+
+- The GTK build uses a header bar with a main menu (File items, Edit, View, Image
+  submenus), GTK file choosers and dialogs.
+- The iced build has File, Edit, View and Image menus in its header, draws its dialogs
+  inside the window, and uses the desktop file chooser through the XDG portal.

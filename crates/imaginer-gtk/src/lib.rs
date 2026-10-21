@@ -778,3 +778,108 @@ impl Ui {
         self.canvas.queue_draw();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! GTK wiring tests. They need a display and are skipped without one. All GTK calls
+    //! stay on this one test's thread.
+
+    use imaginer_core::codec::{self, EncodeOptions, Format};
+    use imaginer_core::model::{ItemId, Step};
+
+    use super::*;
+
+    fn write(dir: &std::path::Path, name: &str, exif: Option<Vec<u8>>) -> PathBuf {
+        let path = dir.join(name);
+        let pixels = image::RgbaImage::from_pixel(60, 40, image::Rgba([10, 200, 30, 255]));
+        let options = EncodeOptions {
+            format: Format::from_path(&path).expect("format"),
+            quality: 90,
+            dpi: None,
+            exif,
+        };
+        codec::write(&pixels, &path, &options).expect("write");
+        path
+    }
+
+    /// Big-endian EXIF block with Make = "Cam".
+    fn exif_make() -> Vec<u8> {
+        let mut b = b"MM\0\x2a\0\0\0\x08".to_vec();
+        b.extend_from_slice(&[0, 1, 0x01, 0x0F, 0, 2, 0, 0, 0, 4]);
+        b.extend_from_slice(b"Cam\0");
+        b.extend_from_slice(&[0, 0, 0, 0]);
+        b
+    }
+
+    #[test]
+    fn widgets_follow_the_editor() {
+        if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            return;
+        }
+        if gtk4::init().is_err() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("imaginer-gtk-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let plain = write(&dir, "plain.png", None);
+        let photo = write(&dir, "photo.jpg", Some(exif_make()));
+        let app = Application::builder()
+            .application_id("app.imaginer.Test")
+            .flags(gio::ApplicationFlags::NON_UNIQUE)
+            .build();
+        app.register(None::<&gio::Cancellable>).expect("register");
+
+        let ui = Ui::new(&app, vec![plain.clone()]);
+
+        // spec: UNDO-003 — the undo button names the step.
+        assert!(ui.editor.borrow_mut().apply(Step::MoveItem {
+            item: ItemId(1),
+            x: 3,
+            y: 0
+        }));
+        ui.refresh();
+        assert_eq!(ui.undo.tooltip_text().as_deref(), Some("Undo Move image"));
+        assert!(!ui.redo.is_sensitive());
+
+        // spec: CROP-002, CROP-004 — the crop bar shows and edits the rectangle.
+        ui.command(Command::Crop(ItemId(1)));
+        assert!(ui.crop.container.is_visible());
+        assert_eq!(ui.crop.width.value(), 60.0);
+        ui.crop.width.set_value(30.0);
+        assert_eq!(
+            ui.editor.borrow().crop_tool().map(|c| c.pixel_rect().width),
+            Some(30)
+        );
+        ui.command(Command::ApplyCrop);
+        assert!(!ui.crop.container.is_visible());
+        assert_eq!(
+            ui.editor
+                .borrow()
+                .project()
+                .state()
+                .item(ItemId(1))
+                .map(|i| i.width),
+            Some(30)
+        );
+
+        // spec: META-001 — the status bar shows the EXIF notice.
+        assert!(!ui.exif.is_visible());
+        ui.editor.borrow_mut().open(&photo).expect("open photo");
+        ui.refresh();
+        assert!(ui.exif.is_visible());
+        assert_eq!(ui.exif.label().as_deref(), Some("ⓘ Contains EXIF metadata"));
+
+        // spec: PROJ-005 — missing sources are reported with a way to locate them.
+        let project = dir.join("p.imaginer");
+        ui.editor.borrow_mut().save_as(&project).expect("save");
+        std::fs::remove_file(&photo).expect("delete");
+        ui.editor.borrow_mut().open(&project).expect("open project");
+        ui.refresh();
+        assert!(ui.missing.is_visible());
+        assert_eq!(ui.missing_label.text(), "photo.jpg is missing");
+
+        ui.editor.replace(Editor::new());
+        ui.window.destroy();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

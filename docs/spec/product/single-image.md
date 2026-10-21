@@ -7,26 +7,26 @@ is also available to items in a composition.
 ## Crop
 
 ### CROP-001: Crop with handles
-Status: Accepted
+Status: Implemented
 
 When the user activates the crop tool on an image, the system shall show a crop
 rectangle with corner and edge handles over the image, and dragging a handle shall
 resize the rectangle. Dragging inside the rectangle shall move it.
 
 ### CROP-002: Crop by numbers
-Status: Accepted
+Status: Implemented
 
 While the crop tool is active, the system shall show the rectangle's left, top, width
 and height in pixels as editable fields, kept in sync with the handles.
 
 ### CROP-003: Aspect ratio lock
-Status: Accepted
+Status: Implemented
 
 The crop tool shall offer an aspect ratio choice: free (default), original, 1:1, 4:3,
 3:2, 16:9, or custom. While a ratio is chosen, handles shall preserve it.
 
 ### CROP-004: Apply and cancel
-Status: Accepted
+Status: Implemented
 
 When the user applies the crop (Enter or an Apply button), the system shall record a
 crop step. When the user cancels (Escape), no step shall be recorded.
@@ -36,25 +36,25 @@ crop step. When the user cancels (Escape), no step shall be recorded.
 Both meanings of "change resolution" are supported.
 
 ### RES-001: Resample pixel dimensions
-Status: Accepted
+Status: Implemented
 
 The system shall let the user set new pixel width and height. Aspect ratio shall be
 locked by default and may be unlocked. Applying records a resample step.
 
 ### RES-002: Resampling filter
-Status: Accepted
+Status: Implemented
 
 Resampling shall use Lanczos3 by default; the user may choose nearest, bilinear, or
 Lanczos3.
 
 ### RES-003: Set DPI without resampling
-Status: Accepted
+Status: Implemented
 
 The system shall let the user set the DPI value only, leaving pixels unchanged.
 Applying records a set-DPI step.
 
 ### RES-004: Set print size
-Status: Accepted
+Status: Implemented
 
 The system shall let the user enter a print size (inches or centimeters) together with
 a DPI, and shall resample to the pixel dimensions that size and DPI imply.
@@ -64,18 +64,33 @@ a DPI, and shall resample to the pixel dimensions that size and DPI imply.
 Conversion is choosing an output format at export (see `export.md`).
 
 ### CONV-001: Readable formats
-Status: Accepted
+Status: Implemented
 
 The system shall open PNG, JPEG, WebP, TIFF, BMP, GIF (first frame), HEIF/HEIC and AVIF
 images.
 
 ### CONV-002: Writable formats
-Status: Accepted
+Status: Implemented
 
 The system shall export PNG, JPEG, WebP, TIFF, BMP, HEIF and AVIF.
 
 ### CONV-003: Lossy quality
-Status: Accepted
+Status: Implemented
 
 When exporting to a lossy format, the system shall offer a quality setting (default 90
 on a 1–100 scale).
+
+## Implementation notes
+
+Decisions made where the requirements were silent; review and promote to requirements or
+change as needed.
+
+- The crop rectangle and its fields are in pixels of the upright source image. The crop
+  tool can only shrink the part of the image currently shown; undo restores a larger crop.
+- A custom aspect ratio is entered as width : height.
+- Resampling keeps the image's top-left corner in place.
+- Opening an image records an "Add image" step, so it can be undone like any other step.
+- WebP export is lossy at the chosen quality. GIF is read-only (first frame).
+- HEIF export needs the `libheif-plugin-x265` package and AVIF export
+  `libheif-plugin-aomenc`; reading needs `libheif-plugin-libde265` and
+  `libheif-plugin-aomdec`.

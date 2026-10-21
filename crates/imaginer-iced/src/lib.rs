@@ -61,6 +61,34 @@ pub enum Message {
     CropCustom(usize, String),
     Exif,
     Locate,
+    OpenMenu(MenuKind),
+}
+
+/// The main menus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuKind {
+    File,
+    Edit,
+    View,
+    Image,
+}
+
+impl MenuKind {
+    const ALL: [MenuKind; 4] = [
+        MenuKind::File,
+        MenuKind::Edit,
+        MenuKind::View,
+        MenuKind::Image,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            MenuKind::File => "File",
+            MenuKind::Edit => "Edit",
+            MenuKind::View => "View",
+            MenuKind::Image => "Image",
+        }
+    }
 }
 
 /// Choices in the crop bar's aspect list (CROP-003).
@@ -284,6 +312,11 @@ impl App {
                 let item = self.editor.exif_viewer_item();
                 return self.command(Command::ExifViewer(item));
             }
+            Message::OpenMenu(kind) => {
+                let index = MenuKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);
+                let x = 6.0 + index as f32 * 58.0;
+                self.menu = Some((IPoint::new(x, 0.0), self.menu_entries(kind)));
+            }
             Message::Locate => {
                 if let Some((source, ..)) = self.editor.missing_sources().first() {
                     return self.command(Command::LocateSource(*source));
@@ -355,31 +388,80 @@ impl App {
             .editor
             .redo_label()
             .unwrap_or_else(|| "Nothing to redo".to_owned());
-        let snapping = if self.editor.snapping() {
-            "Snap: on"
-        } else {
-            "Snap: off"
+        let menus = MenuKind::ALL.map(|kind| {
+            button(text(kind.label()).size(14))
+                .style(button::text)
+                .on_press(Message::OpenMenu(kind))
+                .into()
+        });
+        let mut bar = row(menus)
+            .spacing(2)
+            .padding(6)
+            .align_y(iced::Alignment::Center);
+        bar = bar
+            .push(Space::new().width(12))
+            .push(action("Open…", Command::Open))
+            .push(action("Add images…", Command::AddImages))
+            .push(tip(undo.into(), undo_label))
+            .push(tip(redo.into(), redo_label))
+            .push(Space::new().width(Length::Fill))
+            .push(action("−", Command::ZoomOut))
+            .push(action("Fit", Command::ZoomFit))
+            .push(action("100%", Command::Zoom100))
+            .push(action("+", Command::ZoomIn));
+        bar.spacing(6).into()
+    }
+
+    /// Entries of a main menu (the Edit menu names the undo and redo steps, UNDO-003).
+    fn menu_entries(&self, kind: MenuKind) -> Vec<MenuEntry> {
+        let entry = |label: String, command: Command| MenuEntry {
+            label,
+            command: Some(command),
         };
-        row![
-            action("Open…", Command::Open),
-            action("Add images…", Command::AddImages),
-            action("Save", Command::Save),
-            action("Save as…", Command::SaveAs),
-            action("Export…", Command::Export),
-            tip(undo.into(), undo_label),
-            tip(redo.into(), redo_label),
-            Space::new().width(Length::Fill),
-            action("Canvas size…", Command::CanvasSize),
-            action("DPI…", Command::SetDpi),
-            action("−", Command::ZoomOut),
-            action("Fit", Command::ZoomFit),
-            action("100%", Command::Zoom100),
-            action("+", Command::ZoomIn),
-            button(text(snapping).size(14)).on_press(Message::Command(Command::ToggleSnapping)),
-        ]
-        .spacing(6)
-        .padding(6)
-        .into()
+        match kind {
+            MenuKind::File => vec![
+                entry("Open…  (Ctrl+O)".into(), Command::Open),
+                entry("Add images…".into(), Command::AddImages),
+                entry("Save  (Ctrl+S)".into(), Command::Save),
+                entry("Save as…  (Ctrl+Shift+S)".into(), Command::SaveAs),
+                entry("Export…  (Ctrl+E)".into(), Command::Export),
+            ],
+            MenuKind::Edit => vec![
+                entry(
+                    format!(
+                        "{}  (Ctrl+Z)",
+                        self.editor.undo_label().unwrap_or_else(|| "Undo".into())
+                    ),
+                    Command::Undo,
+                ),
+                entry(
+                    format!(
+                        "{}  (Ctrl+Shift+Z)",
+                        self.editor.redo_label().unwrap_or_else(|| "Redo".into())
+                    ),
+                    Command::Redo,
+                ),
+            ],
+            MenuKind::View => vec![
+                entry("Zoom in  (Ctrl++)".into(), Command::ZoomIn),
+                entry("Zoom out  (Ctrl+−)".into(), Command::ZoomOut),
+                entry("Fit  (Ctrl+0)".into(), Command::ZoomFit),
+                entry("100%  (Ctrl+1)".into(), Command::Zoom100),
+                entry(
+                    if self.editor.snapping() {
+                        "Turn snapping off".into()
+                    } else {
+                        "Turn snapping on".into()
+                    },
+                    Command::ToggleSnapping,
+                ),
+            ],
+            MenuKind::Image => vec![
+                entry("Canvas size…".into(), Command::CanvasSize),
+                entry("Set DPI…".into(), Command::SetDpi),
+                entry("Show EXIF metadata…".into(), Command::ExifViewer(None)),
+            ],
+        }
     }
 
     fn crop_bar(&self) -> Option<Element<'_, Message>> {

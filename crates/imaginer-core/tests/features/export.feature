@@ -27,6 +27,7 @@ Feature: Export
       | png |
       | jpg |
       | tif |
+      | bmp |
 
   @EXPORT-003
   Scenario: Exporting over a source needs confirmation

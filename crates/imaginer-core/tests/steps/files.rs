@@ -251,6 +251,10 @@ fn recorded_dpi(bytes: &[u8]) -> Option<f64> {
             let density = u16::from_be_bytes([bytes[at + 3], bytes[at + 4]]);
             (units == 1).then_some(f64::from(density))
         }
+        "BMP" => {
+            let ppm = i32::from_le_bytes(bytes.get(38..42)?.try_into().ok()?);
+            Some(f64::from(ppm) * 0.0254)
+        }
         "TIFF" => {
             let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(bytes)).ok()?;
             match decoder.get_tag(tiff::tags::Tag::XResolution).ok()? {

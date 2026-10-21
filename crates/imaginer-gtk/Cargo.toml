@@ -9,5 +9,8 @@ version.workspace = true
 gtk4.workspace = true
 imaginer-core.workspace = true
 
+[dev-dependencies]
+image.workspace = true
+
 [lints]
 workspace = true
