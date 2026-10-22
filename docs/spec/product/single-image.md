@@ -31,6 +31,15 @@ Status: Implemented
 When the user applies the crop (Enter or an Apply button), the system shall record a
 crop step. When the user cancels (Escape), no step shall be recorded.
 
+### CROP-005: Enlarge an earlier crop
+Status: Implemented
+
+The crop rectangle may be enlarged up to the whole source image, so an image cropped
+earlier can be uncropped, however many steps ago that crop was. While the crop tool is
+active, the system shall show the whole source image above the other items, with the
+part outside the rectangle dimmed. Applying keeps the pixels inside the rectangle where
+they were on the canvas.
+
 ## Resolution
 
 Both meanings of "change resolution" are supported.
@@ -85,8 +94,9 @@ on a 1–100 scale).
 Decisions made where the requirements were silent; review and promote to requirements or
 change as needed.
 
-- The crop rectangle and its fields are in pixels of the upright source image. The crop
-  tool can only shrink the part of the image currently shown; undo restores a larger crop.
+- The crop rectangle and its fields are in pixels of the upright source image.
+- While cropping, the preview draws the image on top of the other items. Its z-order is
+  unchanged once the crop is applied or cancelled.
 - A custom aspect ratio is entered as width : height.
 - Resampling keeps the image's top-left corner in place.
 - Opening an image records an "Add image" step, so it can be undone like any other step.

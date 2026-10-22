@@ -1,5 +1,5 @@
-//! The crop tool (CROP-001 to CROP-004, PLACE-004). The crop rectangle is kept in source
-//! pixels and limited to the part of the source the item currently shows.
+//! The crop tool (CROP-001 to CROP-005, PLACE-004). The crop rectangle is kept in source
+//! pixels and limited to the whole source, so an earlier crop can be enlarged again.
 
 use super::Editor;
 use crate::geometry::{PixelRect, Point, Rect};
@@ -60,7 +60,7 @@ pub struct CropTool {
     pub item: ItemId,
     /// The rectangle, in source pixels.
     pub rect: Rect,
-    /// The item's crop when the tool started; the rectangle stays inside it.
+    /// The whole upright source; the rectangle stays inside it (CROP-005).
     pub limits: PixelRect,
     pub aspect: AspectChoice,
     /// Upright size of the whole source, for the "original" ratio.
@@ -78,7 +78,7 @@ impl CropTool {
                 f64::from(c.width),
                 f64::from(c.height),
             ),
-            limits: c,
+            limits: PixelRect::new(0, 0, item.source_width, item.source_height),
             aspect: AspectChoice::Free,
             source_size: (item.source_width, item.source_height),
         }
@@ -222,7 +222,8 @@ impl Editor {
         }
     }
 
-    /// Records the crop (CROP-004). The kept region stays where it was on the canvas.
+    /// Records the crop (CROP-004, CROP-005). The kept region stays where it was on the
+    /// canvas.
     pub(super) fn apply_crop(&mut self) -> bool {
         let Some(tool) = self.crop.take() else {
             return false;
@@ -234,21 +235,35 @@ impl Editor {
         if crop == item.crop {
             return true;
         }
-        let mapping = ItemMapping::new(item);
-        let (sx, sy) = mapping.scale();
-        let width = ((f64::from(crop.width) * sx).round() as u32).max(1);
-        let height = ((f64::from(crop.height) * sy).round() as u32).max(1);
-        let center = mapping.source_to_canvas(Point::new(
-            f64::from(crop.left) + f64::from(crop.width) / 2.0,
-            f64::from(crop.top) + f64::from(crop.height) / 2.0,
-        ));
+        let recropped = with_crop(&item, crop);
         self.record(Step::CropItem {
             item: item.id,
             crop,
-            x: (center.x - f64::from(width) / 2.0).round() as i32,
-            y: (center.y - f64::from(height) / 2.0).round() as i32,
-            width,
-            height,
+            x: recropped.x,
+            y: recropped.y,
+            width: recropped.width,
+            height: recropped.height,
         })
+    }
+}
+
+/// `item` showing the `crop` part of its source, placed and scaled so that source pixels
+/// stay where they are on the canvas.
+pub(super) fn with_crop(item: &Item, crop: PixelRect) -> Item {
+    let mapping = ItemMapping::new(*item);
+    let (sx, sy) = mapping.scale();
+    let width = ((f64::from(crop.width) * sx).round() as u32).max(1);
+    let height = ((f64::from(crop.height) * sy).round() as u32).max(1);
+    let center = mapping.source_to_canvas(Point::new(
+        f64::from(crop.left) + f64::from(crop.width) / 2.0,
+        f64::from(crop.top) + f64::from(crop.height) / 2.0,
+    ));
+    Item {
+        crop,
+        x: (center.x - f64::from(width) / 2.0).round() as i32,
+        y: (center.y - f64::from(height) / 2.0).round() as i32,
+        width,
+        height,
+        ..*item
     }
 }

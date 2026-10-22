@@ -227,3 +227,19 @@ fn no_effect(world: &mut World) {
 fn selected(world: &mut World, id: u32) {
     assert_eq!(world.editor.selection().item(), Some(ItemId(id)));
 }
+
+#[then(expr = "image {int} is shown whole and on top while cropping")]
+fn shown_whole(world: &mut World, id: u32) {
+    let state = world.editor.display_state();
+    let item = state.items.last().expect("items");
+    assert_eq!(item.id, ItemId(id));
+    assert_eq!(
+        (
+            item.crop.left,
+            item.crop.top,
+            item.crop.width,
+            item.crop.height
+        ),
+        (0, 0, item.source_width, item.source_height)
+    );
+}

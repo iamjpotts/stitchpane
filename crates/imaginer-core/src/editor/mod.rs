@@ -336,14 +336,15 @@ impl Editor {
     }
 
     /// The state shown on screen: the project with any in-progress gesture or keyboard
-    /// adjustment applied.
+    /// adjustment applied. While cropping, the item shows its whole source on top of the
+    /// other items (CROP-005).
     pub fn display_state(&self) -> Cow<'_, ProjectState> {
         let preview = self
             .gesture
             .as_ref()
             .and_then(pointer::Gesture::preview)
             .or(self.pending.as_ref().map(|(_, step)| step));
-        match preview {
+        let mut state = match preview {
             Some(step) => {
                 let mut state = self.project.state().clone();
                 if state.apply(step).is_ok() {
@@ -353,7 +354,15 @@ impl Editor {
                 }
             }
             None => Cow::Borrowed(self.project.state()),
+        };
+        if let Some(tool) = &self.crop
+            && let Some(index) = state.items.iter().position(|i| i.id == tool.item)
+        {
+            let items = &mut state.to_mut().items;
+            let item = items.remove(index);
+            items.push(crop::with_crop(&item, tool.limits));
         }
+        state
     }
 
     /// Records a step from a dialog or other UI action. Returns false (and sets the

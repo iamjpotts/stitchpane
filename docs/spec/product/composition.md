@@ -60,7 +60,7 @@ Shift is held. Resizing records a resample of that item, never of the source.
 ### PLACE-004: Crop items
 Status: Implemented
 
-The crop tool (CROP-001 to CROP-004) shall work on a selected item.
+The crop tool (CROP-001 to CROP-005) shall work on a selected item.
 
 ### PLACE-005: Z-order
 Status: Implemented

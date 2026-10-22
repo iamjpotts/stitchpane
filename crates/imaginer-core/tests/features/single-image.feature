@@ -64,6 +64,18 @@ Feature: Single image
     And the project has 1 steps
     And the canvas is 200 by 100 pixels
 
+  @CROP-005
+  Scenario: Enlarge a crop made several steps earlier
+    When I start cropping the image
+    And I set the crop rectangle to 10, 20, 50, 40
+    And I press "Enter"
+    And I set the DPI to 300
+    And I start cropping the image
+    Then the crop rectangle is 10, 20, 50, 40
+    When I set the crop rectangle to 0, 0, 200, 100
+    And I press "Enter"
+    Then the canvas is 200 by 100 pixels
+
   @RES-001
   Scenario: Resample with the aspect ratio locked
     When I resize the image to width 100 with the aspect ratio locked

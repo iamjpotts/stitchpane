@@ -144,6 +144,26 @@ Feature: Composition
     And image 1 is at 150, 175
     And the canvas is 400 by 400 pixels
 
+  @CROP-005
+  Scenario: Uncrop an item cropped several steps earlier
+    Given a composition of "a.png" and "b.png" with a custom canvas of 400 by 400 pixels
+    And the view is at 100% with the canvas origin on screen at 50, 50
+    When I select image 1
+    And I start cropping the image
+    And I set the crop rectangle to 0, 0, 50, 50
+    And I press "Enter"
+    And image 2 is moved to 10, 10
+    And I select image 1
+    And I start cropping the image
+    Then image 1 is shown whole and on top while cropping
+    And the crop rectangle is 0, 0, 50, 50
+    When I drag from 200, 200 to 250, 200
+    Then the crop rectangle is 0, 0, 100, 50
+    When I press "Enter"
+    Then image 1 is 100 by 50 pixels
+    And image 1 is at 150, 175
+    And image 2 is on top
+
   @PLACE-005
   Scenario: Change the stacking order
     Given a composition of "a.png" and "b.png" with canvas "Size of the largest image"

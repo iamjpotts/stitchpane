@@ -432,14 +432,16 @@ impl Editor {
                 GestureKind::CropHandle {
                     handle,
                     original: crop.rect,
-                    item: *state.item(crop.item)?,
+                    // The item as shown: its whole source (CROP-005).
+                    item: *self.display_state().item(crop.item)?,
                 }
             }
             Hit::CropInside => {
                 let crop = self.crop.as_ref()?;
                 GestureKind::CropMove {
                     original: crop.rect,
-                    item: *state.item(crop.item)?,
+                    // The item as shown: its whole source (CROP-005).
+                    item: *self.display_state().item(crop.item)?,
                 }
             }
             Hit::Rotate(id) => {
