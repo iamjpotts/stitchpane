@@ -164,6 +164,29 @@ Feature: Composition
     And image 1 is at 150, 175
     And image 2 is on top
 
+  @PLACE-009
+  Scenario: Remove an image from its context menu
+    Given a composition of "a.png" and "b.png" with a custom canvas of 400 by 400 pixels
+    And a crossfade between image 1 and image 2
+    When I open the context menu on image 2
+    And I choose "Remove image"
+    Then the project has 1 images
+    And there are 0 transitions
+    And the undo label is "Undo Remove image"
+    When I undo
+    Then the project has 2 images
+    And there is 1 transition
+
+  @PLACE-009
+  Scenario: Delete removes the selected image
+    Given a composition of "a.png" and "b.png" with a custom canvas of 400 by 400 pixels
+    When I select image 1
+    And I press "Delete"
+    Then the project has 1 images
+    When I select image 2
+    And I press "Backspace"
+    Then the project has 0 images
+
   @PLACE-005
   Scenario: Change the stacking order
     Given a composition of "a.png" and "b.png" with canvas "Size of the largest image"

@@ -93,6 +93,8 @@ redo:
 | `set_feather` | BLEND-007 |
 | `strip_metadata` | META-004 |
 | `relink_source` | PROJ-005 |
+| `remove_item` | PLACE-009 |
+| `smear` | SMEAR-004, SMEAR-005 |
 
 ## Implementation notes
 

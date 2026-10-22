@@ -1112,7 +1112,12 @@ pub fn view<'a>(_app: &'a App, current: &'a Modal) -> Element<'a, Message> {
 
 /// Status bar: canvas size and zoom, missing sources, EXIF notice.
 pub fn status(app: &App) -> Element<'_, Message> {
-    let mut bar = row![text(app.editor.status_text()).size(13)]
+    // UI-010: the zoom level opens the zoom menu.
+    let zoom = button(text(app.editor.zoom_text()).size(13))
+        .style(button::text)
+        .padding([0, 4])
+        .on_press(Message::ZoomMenu);
+    let mut bar = row![text(app.editor.canvas_text()).size(13), zoom]
         .spacing(12)
         .padding([2, 8])
         .align_y(Alignment::Center);

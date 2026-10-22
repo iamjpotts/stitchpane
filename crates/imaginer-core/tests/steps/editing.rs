@@ -4,7 +4,9 @@ use imaginer_core::editor::{
     proportional,
 };
 use imaginer_core::geometry::{PixelRect, Point};
-use imaginer_core::model::{Curve, Feather, Filter, ItemId, Orientation, TransitionKind};
+use imaginer_core::model::{
+    Curve, Feather, Filter, ItemId, Orientation, SmearKind, TransitionKind,
+};
 
 use super::World;
 
@@ -121,6 +123,8 @@ fn parse_key(text: &str) -> (Key, Modifiers) {
         "Down" => Key::Down,
         "Enter" => Key::Enter,
         "Escape" => Key::Escape,
+        "Delete" => Key::Delete,
+        "Backspace" => Key::Backspace,
         "Plus" => Key::Plus,
         "Minus" => Key::Minus,
         "[" => Key::BracketLeft,
@@ -564,4 +568,59 @@ fn frame_matches_foreground(world: &mut World) {
     other.set_view(view.zoom, view.pan);
     other.select(world.editor.selection());
     assert!(world.editor.frame() == other.frame());
+}
+
+#[when(expr = "I start smearing image {int}")]
+fn start_smearing(world: &mut World, id: u32) {
+    assert!(world.editor.execute(Command::Smear(ItemId(id))));
+}
+
+#[when(expr = "I set the brush to {word} {int} pixels wide at {int}% strength")]
+fn set_brush(world: &mut World, kind: String, size: f64, strength: f64) {
+    let kind = SmearKind::ALL
+        .into_iter()
+        .find(|k| k.label().eq_ignore_ascii_case(&kind))
+        .unwrap_or_else(|| panic!("no smear kind {kind}"));
+    world.editor.set_smear_kind(kind);
+    world.editor.set_smear_size(size);
+    world.editor.set_smear_strength(strength / 100.0);
+}
+
+#[then(expr = "the brush is {word} {int} pixels wide at {int}% strength")]
+fn brush_is(world: &mut World, kind: String, size: f64, strength: f64) {
+    let tool = world.editor.smear_tool().expect("smear tool active");
+    assert!(tool.kind.label().eq_ignore_ascii_case(&kind), "{tool:?}");
+    assert_eq!(tool.size, size);
+    assert!((tool.strength * 100.0 - strength).abs() < 1e-9, "{tool:?}");
+}
+
+#[then(expr = "the smear tool is active on image {int}")]
+fn smear_active(world: &mut World, id: u32) {
+    assert_eq!(world.editor.smear_tool().map(|t| t.item), Some(ItemId(id)));
+}
+
+#[then("the smear tool is not active")]
+fn smear_inactive(world: &mut World) {
+    assert_eq!(world.editor.smear_tool(), None);
+}
+
+#[then(expr = "the screen at canvas point {int}, {int} is no longer {string}")]
+fn screen_changed(world: &mut World, x: f64, y: f64, name: String) {
+    let p = world.screen(x, y);
+    let frame = world.editor.frame();
+    let pixel = frame.get_pixel(p.x as u32, p.y as u32).0;
+    assert!(
+        !super::close(pixel, super::color(&name), 12),
+        "{pixel:?} is {name}"
+    );
+}
+
+#[then(expr = "the zoom menu has {string}, {string}, {string} and {string}")]
+fn zoom_menu(world: &mut World, a: String, b: String, c: String, d: String) {
+    let _ = world;
+    let labels: Vec<String> = imaginer_core::editor::Editor::zoom_menu()
+        .into_iter()
+        .map(|e| e.label)
+        .collect();
+    assert_eq!(labels, [a, b, c, d]);
 }

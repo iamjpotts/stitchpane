@@ -11,7 +11,8 @@ use image::imageops::FilterType;
 use crate::codec;
 use crate::geometry::{Point, Rect};
 use crate::metadata::Exif;
-use crate::model::{Filter, Item, ItemId, ProjectState, SeamGeometry, TransitionKind};
+use crate::model::{Filter, Item, ItemId, ProjectState, SeamGeometry, Stroke, TransitionKind};
+use crate::retouch;
 
 /// A decoded source image.
 #[derive(Debug)]
@@ -39,6 +40,8 @@ struct ItemKey {
     width: u32,
     height: u32,
     filter: Filter,
+    /// Hash of the item's smear strokes (SMEAR-004).
+    strokes: u64,
 }
 
 /// Renders project states, caching decoded sources and resampled items.
@@ -46,10 +49,17 @@ struct ItemKey {
 pub struct Renderer {
     sources: HashMap<PathBuf, Result<Arc<LoadedSource>, SourceProblem>>,
     items: HashMap<ItemCacheKey, (ItemKeyBits, Arc<RgbaImage>)>,
+    /// Sources with an item's smear strokes applied, by stroke hash.
+    smeared: HashMap<ItemCacheKey, (u64, Arc<RgbaImage>)>,
     worker: Option<Worker>,
+    /// A stroke being drawn, shown on previews only (SMEAR-004).
+    live: Option<(ItemId, Stroke)>,
+    /// The last preview drawn with the live stroke, shown after the stroke is recorded
+    /// until its full-quality resample is ready.
+    last_live: Option<(ItemCacheKey, ItemKeyBits, Arc<RgbaImage>)>,
 }
 
-type ItemKeyBits = (u32, u32, u32, u32, u32, u32, Filter);
+type ItemKeyBits = (u32, u32, u32, u32, u32, u32, Filter, u64);
 type ItemCacheKey = (PathBuf, ItemId);
 
 /// A resample to do in the background (UI-009).
@@ -57,6 +67,7 @@ struct Job {
     key: ItemCacheKey,
     bits: ItemKeyBits,
     source: Arc<LoadedSource>,
+    strokes: Vec<Stroke>,
 }
 
 struct Done {
@@ -86,7 +97,12 @@ impl Worker {
                     latest.push(job);
                 }
                 for job in latest {
-                    let pixels = Arc::new(resample(&job.source.pixels, job.bits));
+                    let pixels = if job.strokes.is_empty() {
+                        resample(&job.source.pixels, job.bits)
+                    } else {
+                        resample(&smear(&job.source.pixels, &job.strokes), job.bits)
+                    };
+                    let pixels = Arc::new(pixels);
                     let done = Done {
                         key: job.key,
                         bits: job.bits,
@@ -116,6 +132,7 @@ impl ItemKey {
             self.width,
             self.height,
             self.filter,
+            self.strokes,
         )
     }
 }
@@ -158,6 +175,7 @@ impl Renderer {
     pub fn forget(&mut self, path: &Path) {
         self.sources.remove(path);
         self.items.retain(|(p, _), _| p != path);
+        self.smeared.retain(|(p, _), _| p != path);
         if let Some(worker) = &mut self.worker {
             worker.pending.retain(|(p, _), _| p != path);
         }
@@ -174,6 +192,11 @@ impl Renderer {
     /// Whether previews are resampled in the background.
     pub fn background(&self) -> bool {
         self.worker.is_some()
+    }
+
+    /// Sets the stroke being drawn, shown on previews until it is recorded (SMEAR-004).
+    pub fn set_live_stroke(&mut self, live: Option<(ItemId, Stroke)>) {
+        self.live = live;
     }
 
     /// Whether background resamples are still being made.
@@ -195,6 +218,9 @@ impl Renderer {
             };
             if *latest == done.bits {
                 worker.pending.remove(&done.key);
+                if self.last_live.as_ref().is_some_and(|l| l.0 == done.key) {
+                    self.last_live = None;
+                }
             }
             self.items.insert(done.key, (done.bits, done.pixels));
             arrived = true;
@@ -235,44 +261,100 @@ impl Renderer {
     ) -> Option<Arc<RgbaImage>> {
         let path = state.sources.get(&item.source)?.clone();
         let source = self.source(&path).ok()?;
+        let strokes = state.strokes_of(item.id);
         let key = ItemKey {
             crop: item.crop,
             width,
             height,
             filter,
+            strokes: retouch::strokes_hash(strokes),
         }
         .bits();
         let cache_key = (path, item.id);
+        let pixels = self.item_pixels_for(&cache_key, key, source, strokes, stale_ok);
+        match &self.live {
+            Some((id, stroke)) if stale_ok && *id == item.id => {
+                // Draw the live stroke at preview resolution (SMEAR-004).
+                let mut live = (*pixels).clone();
+                let crop = item.crop;
+                let sx = f64::from(live.width()) / f64::from(crop.width);
+                let sy = f64::from(live.height()) / f64::from(crop.height);
+                let map = |p: [f64; 2]| {
+                    [
+                        (p[0] - f64::from(crop.left)) * sx,
+                        (p[1] - f64::from(crop.top)) * sy,
+                    ]
+                };
+                retouch::apply(&mut live, stroke, map, (sx + sy) / 2.0);
+                let live = Arc::new(live);
+                let mut bits = key;
+                bits.7 = retouch::strokes_hash(strokes.iter().chain([stroke]));
+                self.last_live = Some((cache_key, bits, live.clone()));
+                Some(live)
+            }
+            _ => Some(pixels),
+        }
+    }
+
+    /// See [`Renderer::item_pixels`]; `key` includes the strokes.
+    fn item_pixels_for(
+        &mut self,
+        cache_key: &ItemCacheKey,
+        key: ItemKeyBits,
+        source: Arc<LoadedSource>,
+        strokes: &[Stroke],
+        stale_ok: bool,
+    ) -> Arc<RgbaImage> {
+        let cache_key = cache_key.clone();
         if let Some((cached, pixels)) = self.items.get(&cache_key) {
             let same_crop =
                 (cached.0, cached.1, cached.2, cached.3) == (key.0, key.1, key.2, key.3);
             if *cached == key {
-                return Some(pixels.clone());
+                return pixels.clone();
             }
             if stale_ok
                 && same_crop
                 && let Some(worker) = &mut self.worker
             {
+                // A just-recorded stroke looks as it did while drawn.
+                let stale = match &self.last_live {
+                    Some((k, bits, live)) if *k == cache_key && *bits == key => live.clone(),
+                    _ => pixels.clone(),
+                };
                 if worker.pending.get(&cache_key) != Some(&key) {
                     worker.pending.insert(cache_key.clone(), key);
                     let job = Job {
                         key: cache_key,
                         bits: key,
                         source,
+                        strokes: strokes.to_vec(),
                     };
                     if worker.jobs.send(job).is_err() {
                         self.worker = None;
                     }
                 }
-                return Some(pixels.clone());
+                return stale;
             }
         }
-        let pixels = Arc::new(resample(&source.pixels, key));
+        let pixels = if strokes.is_empty() {
+            Arc::new(resample(&source.pixels, key))
+        } else {
+            let smeared = match self.smeared.get(&cache_key) {
+                Some((hash, smeared)) if *hash == key.7 => smeared.clone(),
+                _ => {
+                    let smeared = Arc::new(smear(&source.pixels, strokes));
+                    self.smeared
+                        .insert(cache_key.clone(), (key.7, smeared.clone()));
+                    smeared
+                }
+            };
+            Arc::new(resample(&smeared, key))
+        };
         if let Some(worker) = &mut self.worker {
             worker.pending.remove(&cache_key);
         }
         self.items.insert(cache_key, (key, pixels.clone()));
-        Some(pixels)
+        pixels
     }
 
     /// Renders the whole canvas at full size, for export.
@@ -445,7 +527,7 @@ impl Layer {
 
 /// Crops `source` and resamples it to the size in `bits` (see [`ItemKey::bits`]).
 fn resample(source: &RgbaImage, bits: ItemKeyBits) -> RgbaImage {
-    let (left, top, crop_w, crop_h, width, height, filter) = bits;
+    let (left, top, crop_w, crop_h, width, height, filter, _) = bits;
     let cropped = image::imageops::crop_imm(
         source,
         left,
@@ -459,6 +541,15 @@ fn resample(source: &RgbaImage, bits: ItemKeyBits) -> RgbaImage {
     } else {
         image::imageops::resize(&cropped, width, height, filter_type(filter))
     }
+}
+
+/// The source with smear strokes applied at full resolution (SMEAR-005).
+fn smear(source: &RgbaImage, strokes: &[Stroke]) -> RgbaImage {
+    let mut pixels = source.clone();
+    for stroke in strokes {
+        retouch::apply(&mut pixels, stroke, |p| p, 1.0);
+    }
+    pixels
 }
 
 fn to_u8(v: f32) -> u8 {

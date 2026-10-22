@@ -19,6 +19,7 @@ use imaginer_core::editor::{
     AspectChoice, Button as PointerButton, Command, Cursor, Editor, Key, KeyOutcome, Modifiers,
 };
 use imaginer_core::geometry::{PixelRect, Point};
+use imaginer_core::model::SmearKind;
 use imaginer_core::{APP_ID, APP_NAME};
 
 pub fn run() -> ExitCode {
@@ -49,6 +50,14 @@ struct CropBar {
     custom_h: SpinButton,
 }
 
+/// Smear tool controls (SMEAR-001 to SMEAR-003).
+struct SmearBar {
+    container: GBox,
+    kind: DropDown,
+    size: SpinButton,
+    strength: SpinButton,
+}
+
 pub(crate) struct Ui {
     editor: RefCell<Editor>,
     window: ApplicationWindow,
@@ -63,6 +72,8 @@ pub(crate) struct Ui {
     missing_label: Label,
     hint: Label,
     crop: CropBar,
+    smear: SmearBar,
+    zoom: MenuButton,
     /// Last pointer position over the canvas.
     pointer: Cell<Point>,
     drag_start: Cell<Point>,
@@ -91,6 +102,8 @@ fn map_key(key: gdk::Key) -> Option<Key> {
         "bracketright" | "braceright" => Key::BracketRight,
         "Escape" => Key::Escape,
         "Return" | "KP_Enter" => Key::Enter,
+        "Delete" | "KP_Delete" => Key::Delete,
+        "BackSpace" => Key::Backspace,
         "plus" | "KP_Add" | "equal" => Key::Plus,
         "minus" | "KP_Subtract" | "underscore" => Key::Minus,
         _ => Key::Char(key.to_lower().to_unicode()?),
@@ -106,7 +119,19 @@ fn cursor_name(cursor: Cursor) -> &'static str {
         Cursor::ResizeVertical => "ns-resize",
         Cursor::ResizeDiagonal => "nwse-resize",
         Cursor::Rotate => "crosshair",
+        Cursor::Brush => "crosshair",
     }
+}
+
+/// The window action for a zoom command (UI-010).
+fn zoom_action(command: &Command) -> Option<&'static str> {
+    Some(match command {
+        Command::ZoomIn => "win.zoom-in",
+        Command::ZoomOut => "win.zoom-out",
+        Command::ZoomFit => "win.zoom-fit",
+        Command::Zoom100 => "win.zoom-100",
+        _ => return None,
+    })
 }
 
 fn spin(max: f64) -> SpinButton {
@@ -201,6 +226,36 @@ impl Ui {
         crop.container.append(&cancel_crop);
         crop.container.append(&apply_crop);
 
+        let kinds: Vec<&str> = SmearKind::ALL.iter().map(|k| k.label()).collect();
+        let smear = SmearBar {
+            container: GBox::new(GOrientation::Horizontal, 6),
+            kind: DropDown::from_strings(&kinds),
+            size: spin(5000.0),
+            strength: spin(100.0),
+        };
+        smear.size.set_range(1.0, 5000.0);
+        smear.strength.set_range(1.0, 100.0);
+        for margin in [
+            GBox::set_margin_start,
+            GBox::set_margin_end,
+            GBox::set_margin_top,
+            GBox::set_margin_bottom,
+        ] {
+            margin(&smear.container, 6);
+        }
+        smear.container.append(&Label::new(Some("Smear")));
+        smear.container.append(&smear.kind);
+        smear.container.append(&Label::new(Some("Size")));
+        smear.container.append(&smear.size);
+        smear.container.append(&Label::new(Some("Strength %")));
+        smear.container.append(&smear.strength);
+        let smear_spacer = GBox::new(GOrientation::Horizontal, 0);
+        smear_spacer.set_hexpand(true);
+        smear.container.append(&smear_spacer);
+        let smear_done = Button::with_label("Done");
+        smear_done.add_css_class("suggested-action");
+        smear.container.append(&smear_done);
+
         let status_bar = GBox::new(GOrientation::Horizontal, 12);
         status_bar.set_margin_start(8);
         status_bar.set_margin_end(8);
@@ -208,7 +263,20 @@ impl Ui {
         status_bar.set_margin_bottom(2);
         let status = Label::new(None);
         status.set_halign(Align::Start);
-        status.set_hexpand(true);
+        // UI-010: the zoom level opens the View menu's zoom choices.
+        let zoom_menu = gio::Menu::new();
+        for entry in Editor::zoom_menu() {
+            let action = entry.command.as_ref().and_then(zoom_action);
+            zoom_menu.append(Some(&entry.label), action);
+        }
+        let zoom = MenuButton::builder()
+            .menu_model(&zoom_menu)
+            .direction(gtk4::ArrowType::Up)
+            .tooltip_text("Zoom")
+            .build();
+        zoom.add_css_class("flat");
+        let status_spacer = GBox::new(GOrientation::Horizontal, 0);
+        status_spacer.set_hexpand(true);
         let missing = GBox::new(GOrientation::Horizontal, 6);
         let missing_label = Label::new(None);
         let locate = Button::with_label("Locate…");
@@ -219,11 +287,14 @@ impl Ui {
         exif.add_css_class("flat");
         exif.set_tooltip_text(Some("Show EXIF metadata"));
         status_bar.append(&status);
+        status_bar.append(&zoom);
+        status_bar.append(&status_spacer);
         status_bar.append(&missing);
         status_bar.append(&exif);
 
         let layout = GBox::new(GOrientation::Vertical, 0);
         layout.append(&crop.container);
+        layout.append(&smear.container);
         layout.append(&overlay);
         layout.append(&status_bar);
         window.set_child(Some(&layout));
@@ -244,6 +315,8 @@ impl Ui {
             missing_label,
             hint,
             crop,
+            smear,
+            zoom,
             pointer: Cell::new(Point::default()),
             drag_start: Cell::new(Point::default()),
             updating: Cell::new(false),
@@ -259,6 +332,7 @@ impl Ui {
         ui.install_actions();
         ui.connect_canvas();
         ui.connect_crop_bar(&apply_crop, &cancel_crop);
+        ui.connect_smear_bar(&smear_done);
 
         let weak = Rc::downgrade(&ui);
         let on = move |command: Command| {
@@ -500,6 +574,10 @@ impl Ui {
             if let Some(ui) = weak.upgrade() {
                 ui.pointer.set(Point::new(x, y));
                 ui.update_cursor();
+                // SMEAR-001: the brush outline follows the pointer.
+                if ui.editor.borrow_mut().pointer_hover(Point::new(x, y)) {
+                    ui.canvas.queue_draw();
+                }
             }
         });
         self.canvas.add_controller(motion);
@@ -564,6 +642,51 @@ impl Ui {
             }
         });
         self.window.add_controller(keys);
+    }
+
+    fn connect_smear_bar(self: &Rc<Self>, done: &Button) {
+        let weak = Rc::downgrade(self);
+        let apply = move || {
+            let Some(ui) = weak.upgrade() else { return };
+            if ui.updating.get() {
+                return;
+            }
+            {
+                let s = &ui.smear;
+                let mut editor = ui.editor.borrow_mut();
+                if let Some(kind) = SmearKind::ALL.get(s.kind.selected() as usize) {
+                    editor.set_smear_kind(*kind);
+                }
+                editor.set_smear_size(s.size.value());
+                editor.set_smear_strength(s.strength.value() / 100.0);
+            }
+            ui.canvas.queue_draw();
+        };
+        let f = apply.clone();
+        self.smear.kind.connect_selected_notify(move |_| f());
+        let f = apply.clone();
+        self.smear.size.connect_value_changed(move |_| f());
+        self.smear.strength.connect_value_changed(move |_| apply());
+        let weak = Rc::downgrade(self);
+        done.connect_clicked(move |_| {
+            if let Some(ui) = weak.upgrade() {
+                ui.command(Command::EndSmear);
+            }
+        });
+    }
+
+    fn refresh_smear_bar(&self) {
+        let tool = self.editor.borrow().smear_tool();
+        self.smear.container.set_visible(tool.is_some());
+        let Some(tool) = tool else { return };
+        self.updating.set(true);
+        let index = SmearKind::ALL.iter().position(|k| *k == tool.kind);
+        self.smear.kind.set_selected(index.unwrap_or(0) as u32);
+        self.smear.size.set_value(tool.size);
+        self.smear
+            .strength
+            .set_value((tool.strength * 100.0).round());
+        self.updating.set(false);
     }
 
     fn connect_crop_bar(self: &Rc<Self>, apply: &Button, cancel: &Button) {
@@ -781,7 +904,8 @@ impl Ui {
                     .redo_label()
                     .unwrap_or_else(|| "Nothing to redo".to_owned()),
             ));
-            self.status.set_text(&editor.status_text());
+            self.status.set_text(&editor.canvas_text());
+            self.zoom.set_label(&editor.zoom_text());
             match editor.exif_notice() {
                 Some(text) => {
                     self.exif.set_label(&format!("ⓘ {text}"));
@@ -802,6 +926,7 @@ impl Ui {
             self.hint.set_visible(editor.is_empty());
         }
         self.refresh_crop_bar();
+        self.refresh_smear_bar();
         let model = self.menu_model();
         self.menu
             .set_popover(Some(&PopoverMenu::from_model(Some(&model))));
@@ -903,6 +1028,20 @@ mod tests {
                 .map(|i| i.width),
             Some(30)
         );
+
+        // spec: UI-010 — the zoom level in the status bar opens the zoom choices.
+        let zoom_label = ui.editor.borrow().zoom_text();
+        assert_eq!(ui.zoom.label().as_deref(), Some(zoom_label.as_str()));
+        assert_eq!(ui.zoom.menu_model().map(|m| m.n_items()), Some(4));
+
+        // spec: SMEAR-001 — the smear bar shows the brush and Done leaves the tool.
+        ui.command(Command::Smear(ItemId(1)));
+        assert!(ui.smear.container.is_visible());
+        assert_eq!(ui.smear.strength.value(), 50.0);
+        ui.smear.size.set_value(12.0);
+        assert_eq!(ui.editor.borrow().smear_tool().map(|t| t.size), Some(12.0));
+        ui.command(Command::EndSmear);
+        assert!(!ui.smear.container.is_visible());
 
         // spec: META-001 — the status bar shows the EXIF notice.
         assert!(!ui.exif.is_visible());

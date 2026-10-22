@@ -22,6 +22,7 @@ use imaginer_core::editor::{
     Modifiers,
 };
 use imaginer_core::geometry::{PixelRect, Point};
+use imaginer_core::model::SmearKind;
 
 pub fn run() -> ExitCode {
     let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
@@ -65,6 +66,11 @@ pub enum Message {
     Exif,
     Locate,
     OpenMenu(MenuKind),
+    /// The status bar's zoom level was clicked (UI-010).
+    ZoomMenu,
+    SmearChoice(String),
+    /// Size or strength typed in the smear bar.
+    SmearField(usize, String),
 }
 
 /// The main menus.
@@ -109,6 +115,8 @@ pub struct App {
     menu: Option<(IPoint, Vec<MenuEntry>)>,
     modal: Option<Modal>,
     crop_fields: [String; 4],
+    /// Brush size and strength (%) as typed in the smear bar (SMEAR-003).
+    smear_fields: [String; 2],
     custom_aspect: [String; 2],
     window: Option<window::Id>,
     /// Status bar notices, computed in refresh() (META-001, PROJ-005).
@@ -138,6 +146,8 @@ fn map_key(key: &keyboard::Key) -> Option<Key> {
         keyboard::Key::Named(Named::ArrowDown) => Key::Down,
         keyboard::Key::Named(Named::Escape) => Key::Escape,
         keyboard::Key::Named(Named::Enter) => Key::Enter,
+        keyboard::Key::Named(Named::Delete) => Key::Delete,
+        keyboard::Key::Named(Named::Backspace) => Key::Backspace,
         keyboard::Key::Character(c) => match c {
             "[" | "{" => Key::BracketLeft,
             "]" | "}" => Key::BracketRight,
@@ -157,7 +167,7 @@ fn interaction(cursor: Cursor) -> mouse::Interaction {
         Cursor::ResizeHorizontal => mouse::Interaction::ResizingHorizontally,
         Cursor::ResizeVertical => mouse::Interaction::ResizingVertically,
         Cursor::ResizeDiagonal => mouse::Interaction::ResizingDiagonallyDown,
-        Cursor::Rotate => mouse::Interaction::Crosshair,
+        Cursor::Rotate | Cursor::Brush => mouse::Interaction::Crosshair,
     }
 }
 
@@ -177,6 +187,7 @@ impl App {
             menu: None,
             modal: None,
             crop_fields: Default::default(),
+            smear_fields: Default::default(),
             custom_aspect: ["3".to_owned(), "4".to_owned()],
             window: None,
             exif_notice: None,
@@ -222,19 +233,27 @@ impl App {
             let r = crop.pixel_rect();
             self.crop_fields = [r.left, r.top, r.width, r.height].map(|v| v.to_string());
         }
+        if let Some(tool) = self.editor.smear_tool() {
+            self.smear_fields = [
+                tool.size.to_string(),
+                (tool.strength * 100.0).round().to_string(),
+            ];
+        }
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         // Keep what the user is typing in the crop fields (CROP-002).
-        let typing = matches!(message, Message::CropField(..));
+        let typing = matches!(message, Message::CropField(..) | Message::SmearField(..));
         if matches!(message, Message::PollBackground) && !self.editor.poll_background() {
             return Task::none();
         }
         let task = self.handle(message);
         let fields = self.crop_fields.clone();
+        let smear_fields = self.smear_fields.clone();
         self.refresh();
         if typing {
             self.crop_fields = fields;
+            self.smear_fields = smear_fields;
         }
         task
     }
@@ -341,6 +360,25 @@ impl App {
                 let index = MenuKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);
                 let x = 6.0 + index as f32 * 58.0;
                 self.menu = Some((IPoint::new(x, 0.0), self.menu_entries(kind)));
+            }
+            Message::ZoomMenu => {
+                let p = IPoint::new(0.0, self.canvas_size.height);
+                self.menu = Some((p, Editor::zoom_menu()));
+            }
+            Message::SmearChoice(label) => {
+                if let Some(kind) = SmearKind::ALL.into_iter().find(|k| k.label() == label) {
+                    self.editor.set_smear_kind(kind);
+                }
+            }
+            Message::SmearField(index, value) => {
+                if let Ok(v) = value.trim().parse::<f64>() {
+                    if index == 0 {
+                        self.editor.set_smear_size(v);
+                    } else {
+                        self.editor.set_smear_strength(v / 100.0);
+                    }
+                }
+                self.smear_fields[index] = value;
             }
             Message::Locate => {
                 if let Some((source, ..)) = self.editor.missing_sources().first() {
@@ -499,6 +537,43 @@ impl App {
         }
     }
 
+    /// The smear tool's bar (SMEAR-001 to SMEAR-003).
+    fn smear_bar(&self) -> Option<Element<'_, Message>> {
+        let tool = self.editor.smear_tool()?;
+        let field = |index: usize, label: &'static str| {
+            row![
+                text(label),
+                text_input("", &self.smear_fields[index])
+                    .on_input(move |v| Message::SmearField(index, v))
+                    .width(70)
+            ]
+            .spacing(4)
+            .align_y(iced::Alignment::Center)
+        };
+        let kinds: Vec<String> = SmearKind::ALL
+            .iter()
+            .map(|k| k.label().to_owned())
+            .collect();
+        let bar = row![
+            text("Smear"),
+            pick_list(
+                kinds,
+                Some(tool.kind.label().to_owned()),
+                Message::SmearChoice
+            ),
+            field(0, "Size"),
+            field(1, "Strength %"),
+            Space::new().width(Length::Fill),
+            button(text("Done"))
+                .style(button::success)
+                .on_press(Message::Command(Command::EndSmear)),
+        ]
+        .spacing(10)
+        .padding(6)
+        .align_y(iced::Alignment::Center);
+        Some(bar.into())
+    }
+
     fn crop_bar(&self) -> Option<Element<'_, Message>> {
         let crop = self.editor.crop_tool()?;
         let field = |index: usize, label: &'static str| {
@@ -584,6 +659,9 @@ impl App {
         }
         let mut page = column![self.header()];
         if let Some(bar) = self.crop_bar() {
+            page = page.push(bar);
+        }
+        if let Some(bar) = self.smear_bar() {
             page = page.push(bar);
         }
         page = page.push(layers);

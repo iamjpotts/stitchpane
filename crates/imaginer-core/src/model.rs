@@ -118,6 +118,42 @@ impl Feather {
     }
 }
 
+/// What a smear stroke does to the pixels under the brush (SMEAR-002).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SmearKind {
+    #[default]
+    Smudge,
+    Blur,
+    Push,
+}
+
+impl SmearKind {
+    pub const ALL: [SmearKind; 3] = [SmearKind::Smudge, SmearKind::Blur, SmearKind::Push];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SmearKind::Smudge => "Smudge",
+            SmearKind::Blur => "Blur",
+            SmearKind::Push => "Push",
+        }
+    }
+}
+
+/// One smear stroke on an item (SMEAR-004). Coordinates are pixels of the upright
+/// source image, so the stroke stays with the image (SMEAR-005).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Stroke {
+    pub kind: SmearKind,
+    /// Brush diameter in source pixels.
+    pub size: f64,
+    /// `0..=1`.
+    pub strength: f64,
+    /// The brush path, as `[x, y]` source pixels.
+    pub points: Vec<[f64; 2]>,
+}
+
 /// A transition between two items (BLEND-006).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -358,6 +394,13 @@ pub enum Step {
         source: SourceId,
         path: PathBuf,
     },
+    RemoveItem {
+        item: ItemId,
+    },
+    Smear {
+        item: ItemId,
+        stroke: Stroke,
+    },
 }
 
 impl Step {
@@ -379,6 +422,8 @@ impl Step {
             Step::SetFeather { .. } => "Feather edges",
             Step::StripMetadata { .. } => "Strip metadata",
             Step::RelinkSource { .. } => "Locate source",
+            Step::RemoveItem { .. } => "Remove image",
+            Step::Smear { .. } => "Smear",
         }
     }
 }
@@ -465,6 +510,8 @@ pub struct ProjectState {
     /// Bottom to top (z-order).
     pub items: Vec<Item>,
     pub transitions: Vec<Transition>,
+    /// Smear strokes of each item, in the order they were made (SMEAR-004).
+    pub strokes: BTreeMap<ItemId, Vec<Stroke>>,
 }
 
 impl ProjectState {
@@ -474,6 +521,7 @@ impl ProjectState {
             sources,
             items: Vec::new(),
             transitions: Vec::new(),
+            strokes: BTreeMap::new(),
         }
     }
 
@@ -517,6 +565,11 @@ impl ProjectState {
     pub fn canvas_size(&self) -> (u32, u32) {
         let r = self.canvas_rect();
         (r.width as u32, r.height as u32)
+    }
+
+    /// The item's smear strokes, oldest first.
+    pub fn strokes_of(&self, item: ItemId) -> &[Stroke] {
+        self.strokes.get(&item).map_or(&[], Vec::as_slice)
     }
 
     pub fn transitions_of(&self, item: ItemId) -> impl Iterator<Item = &Transition> {
@@ -801,6 +854,25 @@ impl ProjectState {
                     .get_mut(&source)
                     .ok_or(StepError::UnknownSource(source))?;
                 *entry = path.clone();
+            }
+            Step::RemoveItem { item } => {
+                let index = self.item_index(item).ok_or(StepError::UnknownItem(item))?;
+                self.items.remove(index);
+                self.transitions.retain(|t| !t.items.contains(&item));
+                self.strokes.remove(&item);
+            }
+            Step::Smear { item, ref stroke } => {
+                self.item(item).ok_or(StepError::UnknownItem(item))?;
+                let finite = stroke.points.iter().flatten().all(|v| v.is_finite());
+                if !(finite && stroke.size.is_finite() && stroke.size > 0.0) {
+                    return Err(invalid("brush size must be positive"));
+                }
+                if !(0.0..=1.0).contains(&stroke.strength) || stroke.points.is_empty() {
+                    return Err(invalid(
+                        "a stroke needs points and a strength from 0% to 100%",
+                    ));
+                }
+                self.strokes.entry(item).or_default().push(stroke.clone());
             }
         }
         Ok(())

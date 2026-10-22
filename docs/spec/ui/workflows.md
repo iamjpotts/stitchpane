@@ -81,6 +81,12 @@ guides shall follow the pointer without waiting for images to be resampled. Resa
 an image to its new size shall happen in the background; until it is ready, the image
 is drawn stretched from its previous resample.
 
+### UI-010: Zoom menu in the status bar
+Status: Implemented
+
+Clicking the zoom level in the status bar shall open a menu with the same zoom choices
+as the View menu.
+
 ## Keyboard shortcuts
 
 | Action | Shortcut |
@@ -90,6 +96,8 @@ is drawn stretched from its previous resample.
 | Export | Ctrl+E |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y |
 | Crop tool | C |
+| Smear tool | S |
+| Remove selected image | Delete, Backspace |
 | Move / resize selection | Arrows / Ctrl+Arrows (Shift: 10 px) |
 | Rotate selection | `[` / `]` (0.1°; Shift: 1°) |
 | Disable snapping while dragging | Hold Alt |

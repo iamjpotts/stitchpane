@@ -47,6 +47,7 @@ When the user drags a crop handle, the system shall ...
 | `UNDO` | `product/editing.md` |
 | `META` | `product/metadata.md` |
 | `EXPORT` | `product/export.md` |
+| `SMEAR` | `product/retouch.md` |
 | `UI` | `ui/workflows.md` |
 
 ## Tests and traceability

@@ -33,6 +33,8 @@ pub enum Cursor {
     ResizeVertical,
     ResizeDiagonal,
     Rotate,
+    /// The smear brush (SMEAR-001).
+    Brush,
 }
 
 /// Corner and edge handles of a box, clockwise from the top-left.
@@ -173,6 +175,8 @@ pub(super) enum GestureKind {
         original: Rect,
         item: Item,
     },
+    /// A smear stroke's canvas points (SMEAR-004).
+    Smear(Vec<Point>),
 }
 
 /// A press must move this far, in screen pixels, before it counts as a drag; a plain
@@ -384,6 +388,9 @@ impl Editor {
 
     /// Pointer shape to show at a screen point.
     pub fn cursor_at(&self, screen: Point) -> Cursor {
+        if self.smear.is_some() {
+            return Cursor::Brush;
+        }
         if let Some(g) = &self.gesture {
             return match g.kind {
                 GestureKind::Move(_) | GestureKind::CropMove { .. } => Cursor::Move,
@@ -392,6 +399,7 @@ impl Editor {
                 | GestureKind::Canvas { handle: h, .. }
                 | GestureKind::CropHandle { handle: h, .. } => h.cursor(),
                 GestureKind::Seam { .. } | GestureKind::Feather(..) => Cursor::Grab,
+                GestureKind::Smear(_) => Cursor::Brush,
             };
         }
         match self.hit(screen) {
@@ -420,11 +428,24 @@ impl Editor {
     ) -> Option<Vec<MenuEntry>> {
         self.commit_pending();
         self.gesture = None;
+        self.hover = Some(screen);
         let hit = self.hit(screen);
         if button == Button::Secondary {
             return Some(self.context_menu(hit));
         }
         let start = self.view.to_canvas(screen);
+        if self.smear.is_some() {
+            self.gesture = Some(Gesture {
+                start,
+                start_screen: screen,
+                dragging: true,
+                kind: GestureKind::Smear(vec![start]),
+                preview: None,
+                pan_shift: Point::default(),
+                guides: Vec::new(),
+            });
+            return None;
+        }
         let state = self.project.state();
         let kind = match hit {
             Hit::CropHandle(handle) => {
@@ -517,9 +538,21 @@ impl Editor {
     }
 
     pub fn pointer_move(&mut self, screen: Point, mods: Modifiers) {
+        self.hover = Some(screen);
         let Some(mut gesture) = self.gesture.take() else {
             return;
         };
+        if let GestureKind::Smear(points) = &mut gesture.kind {
+            let p = self.view.to_canvas(screen);
+            let moved = points
+                .last()
+                .is_none_or(|&last| self.screen(last).distance(screen) >= 1.0);
+            if moved {
+                points.push(p);
+            }
+            self.gesture = Some(gesture);
+            return;
+        }
         if !gesture.dragging && screen.distance(gesture.start_screen) < DRAG_THRESHOLD {
             self.gesture = Some(gesture);
             return;
@@ -728,6 +761,8 @@ impl Editor {
                 }
                 None
             }
+            // Handled at the top of pointer_move.
+            GestureKind::Smear(_) => None,
         };
 
         self.gesture = Some(Gesture {
@@ -915,6 +950,10 @@ impl Editor {
         let Some(gesture) = self.gesture.take() else {
             return;
         };
+        if let GestureKind::Smear(points) = &gesture.kind {
+            self.finish_stroke(points);
+            return;
+        }
         if let Some(step) = gesture.preview {
             if matches!(step, Step::ResizeCanvas { .. }) {
                 self.view.fit = false;
@@ -934,6 +973,21 @@ impl Editor {
             self.view.scroll(dy * 40.0, dx * 40.0);
         } else {
             self.view.scroll(dx * 40.0, dy * 40.0);
+        }
+    }
+
+    /// Pointer over the canvas without a button pressed. Returns true if the frame
+    /// should be redrawn (the smear brush outline follows the pointer).
+    pub fn pointer_hover(&mut self, screen: Point) -> bool {
+        self.hover = Some(screen);
+        self.smear.is_some()
+    }
+
+    /// The stroke being drawn, in source pixels (SMEAR-004).
+    pub(super) fn live_stroke(&self) -> Option<(ItemId, crate::model::Stroke)> {
+        match &self.gesture.as_ref()?.kind {
+            GestureKind::Smear(points) => self.stroke_from(points),
+            _ => None,
         }
     }
 
@@ -988,6 +1042,7 @@ impl Editor {
     pub fn item_menu(&mut self, id: ItemId) -> Vec<MenuEntry> {
         let mut menu = vec![
             MenuEntry::new("Crop", Command::Crop(id)),
+            MenuEntry::new("Smear", Command::Smear(id)),
             MenuEntry::new("Resize…", Command::Resize(id)),
             MenuEntry::new("Print size…", Command::PrintSize(id)),
             MenuEntry::separator(),
@@ -1049,6 +1104,8 @@ impl Editor {
                 Command::ExifViewer(Some(id)),
             ));
         }
+        menu.push(MenuEntry::separator());
+        menu.push(MenuEntry::new("Remove image", Command::RemoveItem(id)));
         menu
     }
 }

@@ -11,7 +11,7 @@ use super::pointer::{
 use super::view::View;
 use super::{Edge, Editor, Selection};
 use crate::geometry::Point;
-use crate::model::{ProjectState, TransitionKind};
+use crate::model::{ItemId, ProjectState, Stroke, TransitionKind};
 
 const BACKGROUND: [u8; 4] = [0x5e, 0x5c, 0x64, 0xff];
 const CHECK_LIGHT: [u8; 4] = [0xff, 0xff, 0xff, 0xff];
@@ -30,6 +30,7 @@ pub(super) type BackgroundKey = (u32, u32, [i64; 4]);
 pub(super) struct FrameCache {
     state: ProjectState,
     view: View,
+    live: Option<(ItemId, Stroke)>,
     image: RgbaImage,
 }
 
@@ -38,13 +39,18 @@ impl Editor {
     pub fn frame(&mut self) -> RgbaImage {
         let view = self.display_view();
         let state = self.display_state().into_owned();
+        let live = self.live_stroke();
         let mut image = match &self.frame_cache {
-            Some(cache) if cache.view == view && cache.state == state => cache.image.clone(),
+            Some(cache) if cache.view == view && cache.state == state && cache.live == live => {
+                cache.image.clone()
+            }
             _ => {
+                self.renderer.set_live_stroke(live.clone());
                 let base = self.base_frame(&state, &view);
                 self.frame_cache = Some(FrameCache {
                     state: state.clone(),
                     view,
+                    live,
                     image: base.clone(),
                 });
                 base
@@ -236,6 +242,29 @@ impl Editor {
                 let p = mapping.source_to_canvas(Point::new(r.x + at.x, r.y + at.y));
                 square(image, screen(p), HANDLE_RADIUS, WHITE, BORDER);
             }
+        }
+
+        // Smear brush outline under the pointer (SMEAR-001).
+        if let (Some(tool), Some(at)) = (self.smear_tool(), self.hover) {
+            let r = tool.size * view.zoom / 2.0;
+            let n = ((r * 0.8).ceil() as usize).clamp(16, 128);
+            let ring: Vec<Point> = (0..n)
+                .map(|i| {
+                    let a = i as f64 / n as f64 * std::f64::consts::TAU;
+                    Point::new(at.x + r * a.cos(), at.y + r * a.sin())
+                })
+                .collect();
+            let outer: Vec<Point> = ring
+                .iter()
+                .map(|p| {
+                    Point::new(
+                        at.x + (p.x - at.x) * (r + 1.0) / r,
+                        at.y + (p.y - at.y) * (r + 1.0) / r,
+                    )
+                })
+                .collect();
+            polygon(image, &outer, BORDER, None);
+            polygon(image, &ring, WHITE, None);
         }
 
         // Snapping guides (PLACE-006).

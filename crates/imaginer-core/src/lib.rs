@@ -9,6 +9,7 @@ pub mod model;
 pub mod project;
 pub mod project_file;
 pub mod render;
+pub mod retouch;
 
 /// Human-readable application name.
 pub const APP_NAME: &str = "Imaginer";

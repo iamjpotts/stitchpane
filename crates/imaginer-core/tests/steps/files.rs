@@ -113,6 +113,19 @@ fn solid(world: &mut World, name: String, file: String, w: u32, h: u32) {
     write_solid(world, &path, w, h, color(&name));
 }
 
+#[given(expr = "a red and blue image {string} of {int} by {int} pixels")]
+fn red_and_blue_image(world: &mut World, file: String, w: u32, h: u32) {
+    let path = world.path(&file);
+    let image = RgbaImage::from_fn(w, h, |x, _| {
+        image::Rgba(if x < w / 2 {
+            [255, 0, 0, 255]
+        } else {
+            [0, 0, 255, 255]
+        })
+    });
+    write_image(world, &path, &image, None);
+}
+
 #[given(expr = "a patterned image {string} of {int} by {int} pixels")]
 fn pattern(world: &mut World, file: String, w: u32, h: u32) {
     let path = world.path(&file);

@@ -8,6 +8,7 @@ mod crop;
 mod keys;
 mod overlay;
 mod pointer;
+mod smear;
 pub mod view;
 
 use std::borrow::Cow;
@@ -17,6 +18,7 @@ pub use compose::{CanvasChoice, Preset, PrintUnit, pixels_for_print_size, propor
 pub use crop::{AspectChoice, CropTool};
 pub use keys::{Key, KeyOutcome, Modifiers};
 pub use pointer::{Button, Cursor};
+pub use smear::SmearTool;
 use view::View;
 
 use crate::codec::{self, EncodeOptions, Format};
@@ -106,6 +108,9 @@ pub enum Command {
     Crop(ItemId),
     ApplyCrop,
     CancelCrop,
+    Smear(ItemId),
+    EndSmear,
+    RemoveItem(ItemId),
     ToggleSnapping,
     ZOrder(ItemId, ZOrder),
     QuarterTurns(ItemId, i32),
@@ -188,6 +193,11 @@ pub struct Editor {
     view: View,
     selection: Selection,
     crop: Option<CropTool>,
+    /// The item the smear tool is active on (SMEAR-001).
+    smear: Option<ItemId>,
+    smear_settings: smear::SmearSettings,
+    /// Last pointer position over the canvas, for the brush outline.
+    hover: Option<crate::geometry::Point>,
     gesture: Option<pointer::Gesture>,
     pending: Option<(AdjustTarget, Step)>,
     snapping: bool,
@@ -218,6 +228,9 @@ impl Editor {
             view: View::default(),
             selection: Selection::None,
             crop: None,
+            smear: None,
+            smear_settings: smear::SmearSettings::default(),
+            hover: None,
             gesture: None,
             pending: None,
             snapping: true,
@@ -234,10 +247,12 @@ impl Editor {
         let viewport = self.view.viewport;
         let snapping = self.snapping;
         let last_folder = self.last_folder.take();
+        let smear_settings = self.smear_settings;
         let background = self.renderer.background();
         *self = Self::with_project(project, path);
         self.snapping = snapping;
         self.last_folder = last_folder;
+        self.smear_settings = smear_settings;
         self.renderer.set_background(background);
         self.set_viewport(viewport.0, viewport.1);
     }
@@ -425,6 +440,9 @@ impl Editor {
         {
             self.crop = None;
         }
+        if self.smear.is_some_and(|item| state.item(item).is_none()) {
+            self.smear = None;
+        }
         if self.view.fit {
             self.fit_view();
         }
@@ -472,7 +490,16 @@ impl Editor {
                 self.view.set_zoom(1.0, c);
                 true
             }
-            Command::Crop(item) => self.start_crop(item),
+            Command::Crop(item) => {
+                self.smear = None;
+                self.start_crop(item)
+            }
+            Command::Smear(item) => self.start_smear(item),
+            Command::EndSmear => {
+                self.smear = None;
+                true
+            }
+            Command::RemoveItem(item) => self.record(Step::RemoveItem { item }),
             Command::ApplyCrop => self.apply_crop(),
             Command::CancelCrop => {
                 self.crop = None;
@@ -946,14 +973,33 @@ impl Editor {
 
     /// Status bar text: canvas size, DPI and zoom.
     pub fn status_text(&self) -> String {
+        format!("{} · {}", self.canvas_text(), self.zoom_text())
+    }
+
+    /// Status bar text without the zoom: canvas size and DPI.
+    pub fn canvas_text(&self) -> String {
         let state = self.display_state();
         let (w, h) = state.canvas_size();
         let mut text = format!("{w} × {h} px");
         if let Some(dpi) = state.canvas.dpi {
             text.push_str(&format!(" · {} DPI", format_number(dpi)));
         }
-        text.push_str(&format!(" · zoom {}%", (self.view.zoom * 100.0).round()));
         text
+    }
+
+    /// The zoom level as the status bar shows it; clicking it opens the zoom menu (UI-010).
+    pub fn zoom_text(&self) -> String {
+        format!("zoom {}%", (self.view.zoom * 100.0).round())
+    }
+
+    /// The View menu's zoom choices, also offered from the status bar (UI-010).
+    pub fn zoom_menu() -> Vec<MenuEntry> {
+        vec![
+            MenuEntry::new("Zoom in", Command::ZoomIn),
+            MenuEntry::new("Zoom out", Command::ZoomOut),
+            MenuEntry::new("Fit", Command::ZoomFit),
+            MenuEntry::new("100%", Command::Zoom100),
+        ]
     }
 }
 

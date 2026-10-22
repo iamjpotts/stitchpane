@@ -91,6 +91,13 @@ center; holding Shift limits the angle to 15° steps. The context menu shall als
 "Rotate…" for entering an angle in degrees (to 0.1°). Rotation records a rotate step;
 areas the rotated item no longer covers are transparent.
 
+### PLACE-009: Remove an image
+Status: Implemented
+
+An item's context menu shall offer "Remove image", and pressing Delete or Backspace
+while an item is selected shall do the same. Removing records a step; the item's
+transitions and smear strokes are removed with it. The source file is not touched.
+
 ## Blend transitions
 
 ### BLEND-006: Transition types

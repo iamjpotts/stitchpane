@@ -243,3 +243,9 @@ fn shown_whole(world: &mut World, id: u32) {
         (0, 0, item.source_width, item.source_height)
     );
 }
+
+#[then(expr = "the rendered canvas at {int}, {int} is no longer {string}")]
+fn rendered_changed(world: &mut World, x: u32, y: u32, name: String) {
+    let pixel = rendered_at(world, x, y);
+    assert!(!close(pixel, color(&name), 12), "{pixel:?} is still {name}");
+}

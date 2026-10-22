@@ -147,3 +147,7 @@ Feature: User interface behavior shared by both UIs
     When I release the pointer at 200, 100
     And the background resampling finishes
     Then the frame matches one drawn without background resampling
+
+  @UI-010
+  Scenario: The status bar's zoom menu offers the View menu's zoom choices
+    Then the zoom menu has "Zoom in", "Zoom out", "Fit" and "100%"

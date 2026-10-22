@@ -15,6 +15,8 @@ pub enum Key {
     BracketRight,
     Escape,
     Enter,
+    Delete,
+    Backspace,
     Plus,
     Minus,
     /// Any other character key, as typed without Shift.
@@ -102,6 +104,15 @@ impl Editor {
                     None => KeyOutcome::Unhandled,
                 }
             }
+            Key::Char('s') => match self.selection.item() {
+                Some(item) => self.run(Command::Smear(item)),
+                None => KeyOutcome::Unhandled,
+            },
+            Key::Enter | Key::Escape if self.smear.is_some() => self.run(Command::EndSmear),
+            Key::Delete | Key::Backspace => match self.selection.item() {
+                Some(item) => self.run(Command::RemoveItem(item)),
+                None => KeyOutcome::Unhandled,
+            },
             Key::Enter if self.crop.is_some() => self.run(Command::ApplyCrop),
             Key::Escape if self.crop.is_some() => self.run(Command::CancelCrop),
             Key::Escape if self.selection != Selection::None => {

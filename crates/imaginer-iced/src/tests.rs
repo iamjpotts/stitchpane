@@ -304,3 +304,59 @@ fn resampling_happens_in_the_background() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
+
+#[test]
+fn status_bar_zoom_opens_the_zoom_menu() {
+    // spec: UI-010
+    let dir = Scratch::new("zoom");
+    let a = dir.image("a.png", 400, 300, None);
+    let mut app = app_with(&[&a]);
+    let label = app.editor.zoom_text();
+    click(&mut app, &label);
+    assert!(shows(&app, "Zoom in"));
+    click(&mut app, "100%");
+    assert_eq!(app.editor.zoom_text(), "zoom 100%");
+}
+
+#[test]
+fn smear_bar_sets_the_brush_and_strokes_record_steps() {
+    // spec: SMEAR-001, SMEAR-003, SMEAR-004
+    let dir = Scratch::new("smear");
+    let a = dir.image("a.png", 400, 300, None);
+    let mut app = app_with(&[&a]);
+    let _ = app.update(Message::PointerDown(
+        IPoint::new(512.0, 320.0),
+        PointerButton::Secondary,
+    ));
+    click(&mut app, "Smear");
+    assert!(shows(&app, "Done"));
+    let _ = app.update(Message::SmearField(0, "40".to_owned()));
+    let _ = app.update(Message::SmearChoice("Blur".to_owned()));
+    let tool = app.editor.smear_tool().expect("smear tool");
+    assert_eq!((tool.size, tool.kind.label()), (40.0, "Blur"));
+    let _ = app.update(Message::PointerDown(
+        IPoint::new(500.0, 320.0),
+        PointerButton::Primary,
+    ));
+    let _ = app.update(Message::PointerMove(IPoint::new(540.0, 320.0)));
+    let _ = app.update(Message::PointerUp(IPoint::new(560.0, 320.0)));
+    assert_eq!(app.editor.undo_label().as_deref(), Some("Undo Smear"));
+    click(&mut app, "Done");
+    assert!(app.editor.smear_tool().is_none());
+}
+
+#[test]
+fn delete_removes_the_selected_image() {
+    // spec: PLACE-009
+    let dir = Scratch::new("remove");
+    let a = dir.image("a.png", 40, 30, None);
+    let b = dir.image("b.png", 20, 20, None);
+    let mut app = app_with(&[&a]);
+    let _ = app.update(Message::Picked(dialogs::Purpose::AddImages, vec![b]));
+    assert_eq!(app.editor.project().state().items.len(), 2);
+    let _ = app.update(Message::Key(
+        keyboard::Key::Named(Named::Delete),
+        keyboard::Modifiers::default(),
+    ));
+    assert_eq!(app.editor.project().state().items.len(), 1);
+}
