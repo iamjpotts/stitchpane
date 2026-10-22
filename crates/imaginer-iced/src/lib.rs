@@ -57,6 +57,8 @@ pub enum Message {
     Modal(dialogs::ModalMessage),
     /// Files chosen in a file dialog, for a purpose.
     Picked(dialogs::Purpose, Vec<PathBuf>),
+    /// Checks for finished background resamples (UI-009).
+    PollBackground,
     CropField(usize, String),
     CropAspect(String),
     CropCustom(usize, String),
@@ -161,8 +163,10 @@ fn interaction(cursor: Cursor) -> mouse::Interaction {
 
 impl App {
     fn new(paths: Vec<PathBuf>) -> (Self, Task<Message>) {
+        let mut editor = Editor::new();
+        editor.set_background_rendering(true);
         let mut app = Self {
-            editor: Editor::new(),
+            editor,
             frame: None,
             frame_size: Size::ZERO,
             labels: Vec::new(),
@@ -223,6 +227,9 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         // Keep what the user is typing in the crop fields (CROP-002).
         let typing = matches!(message, Message::CropField(..));
+        if matches!(message, Message::PollBackground) && !self.editor.poll_background() {
+            return Task::none();
+        }
         let task = self.handle(message);
         let fields = self.crop_fields.clone();
         self.refresh();
@@ -300,6 +307,7 @@ impl App {
             }
             Message::Modal(message) => return dialogs::update(self, message),
             Message::Picked(purpose, paths) => return dialogs::picked(self, purpose, paths),
+            Message::PollBackground => {}
             Message::CropField(index, value) => {
                 self.crop_fields[index] = value;
                 let parsed: Vec<u32> = self
@@ -361,7 +369,13 @@ impl App {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        iced::event::listen_with(|event, status, id| match event {
+        // UI-009: redraw as background resamples arrive.
+        let poll = if self.editor.background_busy() {
+            window::frames().map(|_| Message::PollBackground)
+        } else {
+            iced::Subscription::none()
+        };
+        let events = iced::event::listen_with(|event, status, id| match event {
             Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
                 if status == iced::event::Status::Ignored =>
             {
@@ -371,7 +385,8 @@ impl App {
             Event::Window(window::Event::FileDropped(path)) => Some(Message::FileDropped(path)),
             Event::Window(window::Event::CloseRequested) => Some(Message::CloseRequested(id)),
             _ => None,
-        })
+        });
+        iced::Subscription::batch([events, poll])
     }
 
     fn header(&self) -> Element<'_, Message> {
@@ -419,6 +434,9 @@ impl App {
             .push(Space::new().width(12))
             .push(action("Open…", Command::Open))
             .push(action("Add images…", Command::AddImages))
+            .push(button(text("Save").size(14)).on_press_maybe(
+                (!self.editor.is_empty()).then_some(Message::Command(Command::Save)),
+            ))
             .push(tip(undo.into(), undo_label))
             .push(tip(redo.into(), redo_label))
             .push(Space::new().width(Length::Fill))

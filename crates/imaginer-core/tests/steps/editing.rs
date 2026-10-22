@@ -523,3 +523,45 @@ fn viewer_shows(world: &mut World, name: String, group: String) {
         "{entries:?}"
     );
 }
+
+#[given("the screen is resampled in the background")]
+fn background_resampling(world: &mut World) {
+    world.editor.set_background_rendering(true);
+}
+
+#[when("the canvas is drawn")]
+fn canvas_drawn(world: &mut World) {
+    world.editor.frame();
+}
+
+#[then("the frame is drawn while images are still being resampled")]
+fn drawn_while_resampling(world: &mut World) {
+    world.editor.frame();
+    assert!(world.editor.background_busy());
+}
+
+#[when("the background resampling finishes")]
+fn resampling_finishes(world: &mut World) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while world.editor.background_busy() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "resampling never finished"
+        );
+        world.editor.poll_background();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[then("the frame matches one drawn without background resampling")]
+fn frame_matches_foreground(world: &mut World) {
+    let path = world.path("matches.imaginer");
+    world.editor.save_as(&path).expect("save project");
+    let view = *world.editor.view();
+    let mut other = imaginer_core::editor::Editor::new();
+    other.set_viewport(view.viewport.0, view.viewport.1);
+    other.open(&path).expect("open project");
+    other.set_view(view.zoom, view.pan);
+    other.select(world.editor.selection());
+    assert!(world.editor.frame() == other.frame());
+}

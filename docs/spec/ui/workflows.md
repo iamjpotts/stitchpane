@@ -7,7 +7,7 @@ GNOME conventions (header bar, primary menu).
 
 ```
 +------------------------------------------------------------------+
-| [Open] [Add images] [Undo] [Redo]   Imaginer — trip.imaginer  [≡] |
+| [Open] [Add] [Save] [Undo] [Redo]   Imaginer — trip.imaginer  [≡] |
 +------------------------------------------------------------------+
 |                                                                  |
 |            canvas (zoomable, scrollable, with handles)           |
@@ -60,6 +60,27 @@ Status: Implemented
 Right-clicking an item or transition shall open a menu of the actions that apply to it
 (PLACE-005, BLEND-003, crop, resize).
 
+### UI-007: File dialogs start in the last folder
+Status: Implemented
+
+When a file dialog opens, it shall start in the folder of the file most recently picked
+in a file dialog, opened, saved or exported during this session. Before any, it starts
+where the desktop's file chooser starts by default.
+
+### UI-008: Save button
+Status: Implemented
+
+The header bar shall have a Save button next to Open and Add images. It shall do what
+File > Save does: save to the project's file, or ask for a file name if it has none.
+
+### UI-009: Handles keep up while resizing
+Status: Implemented
+
+While the user drags an item, crop or canvas handle, the outline, handles and snapping
+guides shall follow the pointer without waiting for images to be resampled. Resampling
+an image to its new size shall happen in the background; until it is ready, the image
+is drawn stretched from its previous resample.
+
 ## Keyboard shortcuts
 
 | Action | Shortcut |
@@ -81,3 +102,6 @@ Right-clicking an item or transition shall open a menu of the actions that apply
   inside the window, and uses the desktop file chooser through the XDG portal.
 - iced does not report where files are dropped, so in the iced build dropped files are
   placed as "Add images…" places them.
+- The last folder (UI-007) is not remembered after quitting.
+- Background resampling (UI-009) applies to the on-screen preview only; export always
+  resamples at full quality before writing.

@@ -248,3 +248,59 @@ fn edit_menu_names_the_steps() {
     click(&mut app, "Undo Move image  (Ctrl+Z)");
     assert_eq!((item(&app, 1).x, item(&app, 1).y), (0, 0));
 }
+
+#[test]
+fn save_button_saves() {
+    // spec: UI-008
+    let dir = Scratch::new("save");
+    let a = dir.image("a.png", 40, 30, None);
+    let mut app = app_with(&[&a]);
+    app.editor.save_as(&dir.0.join("p.imaginer")).expect("save");
+    assert!(app.editor.apply(Step::MoveItem {
+        item: ItemId(1),
+        x: 5,
+        y: 5
+    }));
+    click(&mut app, "Save");
+    assert!(!app.editor.is_dirty());
+}
+
+#[test]
+fn file_dialogs_remember_the_folder() {
+    // spec: UI-007
+    let dir = Scratch::new("folder");
+    let a = dir.image("a.png", 40, 30, None);
+    std::fs::create_dir_all(dir.0.join("sub")).expect("sub dir");
+    let b = dir.image("sub/b.png", 20, 20, None);
+    let mut app = app_with(&[&a]);
+    assert_eq!(app.editor.dialog_folder(), Some(dir.0.as_path()));
+    let _ = app.update(Message::Picked(dialogs::Purpose::AddImages, vec![b]));
+    assert_eq!(
+        app.editor.dialog_folder(),
+        Some(dir.0.join("sub").as_path())
+    );
+}
+
+#[test]
+fn resampling_happens_in_the_background() {
+    // spec: UI-009
+    let dir = Scratch::new("background");
+    let a = dir.image("a.png", 400, 300, None);
+    let mut app = app_with(&[&a]);
+    assert!(app.editor.apply(Step::ResizeItem {
+        item: ItemId(1),
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 150,
+        filter: imaginer_core::model::Filter::Lanczos3,
+    }));
+    let _ = app.update(Message::Resized(Size::new(1024.0, 640.0)));
+    assert!(app.editor.background_busy());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while app.editor.background_busy() {
+        assert!(std::time::Instant::now() < deadline);
+        let _ = app.update(Message::PollBackground);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}

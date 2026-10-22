@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc;
 
 use image::RgbaImage;
 use image::imageops::FilterType;
@@ -44,10 +45,66 @@ struct ItemKey {
 #[derive(Default)]
 pub struct Renderer {
     sources: HashMap<PathBuf, Result<Arc<LoadedSource>, SourceProblem>>,
-    items: HashMap<(PathBuf, ItemId), (ItemKeyBits, Arc<RgbaImage>)>,
+    items: HashMap<ItemCacheKey, (ItemKeyBits, Arc<RgbaImage>)>,
+    worker: Option<Worker>,
 }
 
 type ItemKeyBits = (u32, u32, u32, u32, u32, u32, Filter);
+type ItemCacheKey = (PathBuf, ItemId);
+
+/// A resample to do in the background (UI-009).
+struct Job {
+    key: ItemCacheKey,
+    bits: ItemKeyBits,
+    source: Arc<LoadedSource>,
+}
+
+struct Done {
+    key: ItemCacheKey,
+    bits: ItemKeyBits,
+    pixels: Arc<RgbaImage>,
+}
+
+/// A thread that resamples items for previews, so drawing never waits for it (UI-009).
+struct Worker {
+    jobs: mpsc::Sender<Job>,
+    done: mpsc::Receiver<Done>,
+    /// The latest size requested for each item and not yet received.
+    pending: HashMap<ItemCacheKey, ItemKeyBits>,
+}
+
+impl Worker {
+    fn start() -> Self {
+        let (jobs, job_rx) = mpsc::channel::<Job>();
+        let (done_tx, done) = mpsc::channel();
+        std::thread::spawn(move || {
+            while let Ok(first) = job_rx.recv() {
+                // Only the latest request for each item matters.
+                let mut latest: Vec<Job> = vec![first];
+                while let Ok(job) = job_rx.try_recv() {
+                    latest.retain(|j| j.key != job.key);
+                    latest.push(job);
+                }
+                for job in latest {
+                    let pixels = Arc::new(resample(&job.source.pixels, job.bits));
+                    let done = Done {
+                        key: job.key,
+                        bits: job.bits,
+                        pixels,
+                    };
+                    if done_tx.send(done).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+        Self {
+            jobs,
+            done,
+            pending: HashMap::new(),
+        }
+    }
+}
 
 impl ItemKey {
     fn bits(self) -> ItemKeyBits {
@@ -101,6 +158,48 @@ impl Renderer {
     pub fn forget(&mut self, path: &Path) {
         self.sources.remove(path);
         self.items.retain(|(p, _), _| p != path);
+        if let Some(worker) = &mut self.worker {
+            worker.pending.retain(|(p, _), _| p != path);
+        }
+    }
+
+    /// Resamples items for previews in a background thread (UI-009). Until a resample is
+    /// ready, previews stretch the item's previous one.
+    pub fn set_background(&mut self, enabled: bool) {
+        if enabled != self.worker.is_some() {
+            self.worker = enabled.then(Worker::start);
+        }
+    }
+
+    /// Whether previews are resampled in the background.
+    pub fn background(&self) -> bool {
+        self.worker.is_some()
+    }
+
+    /// Whether background resamples are still being made.
+    pub fn busy(&self) -> bool {
+        self.worker.as_ref().is_some_and(|w| !w.pending.is_empty())
+    }
+
+    /// Takes finished background resamples. Returns true if any arrived, meaning
+    /// previews may have changed.
+    pub fn poll(&mut self) -> bool {
+        let Some(worker) = &mut self.worker else {
+            return false;
+        };
+        let mut arrived = false;
+        while let Ok(done) = worker.done.try_recv() {
+            // Ignore results for sources forgotten since they were requested.
+            let Some(latest) = worker.pending.get(&done.key) else {
+                continue;
+            };
+            if *latest == done.bits {
+                worker.pending.remove(&done.key);
+            }
+            self.items.insert(done.key, (done.bits, done.pixels));
+            arrived = true;
+        }
+        arrived
     }
 
     /// Sources of `state` that cannot be loaded.
@@ -122,7 +221,9 @@ impl Renderer {
         problems
     }
 
-    /// The item's source pixels, cropped and resampled to `width` × `height`.
+    /// The item's source pixels, cropped and resampled to `width` × `height`. With
+    /// `stale_ok` and a background worker, a missing resample is requested from the
+    /// worker and a previous one of a different size is returned meanwhile.
     fn item_pixels(
         &mut self,
         state: &ProjectState,
@@ -130,6 +231,7 @@ impl Renderer {
         width: u32,
         height: u32,
         filter: Filter,
+        stale_ok: bool,
     ) -> Option<Arc<RgbaImage>> {
         let path = state.sources.get(&item.source)?.clone();
         let source = self.source(&path).ok()?;
@@ -140,29 +242,36 @@ impl Renderer {
             filter,
         }
         .bits();
-        if let Some((cached, pixels)) = self.items.get(&(path.clone(), item.id))
-            && *cached == key
-        {
-            return Some(pixels.clone());
+        let cache_key = (path, item.id);
+        if let Some((cached, pixels)) = self.items.get(&cache_key) {
+            let same_crop =
+                (cached.0, cached.1, cached.2, cached.3) == (key.0, key.1, key.2, key.3);
+            if *cached == key {
+                return Some(pixels.clone());
+            }
+            if stale_ok
+                && same_crop
+                && let Some(worker) = &mut self.worker
+            {
+                if worker.pending.get(&cache_key) != Some(&key) {
+                    worker.pending.insert(cache_key.clone(), key);
+                    let job = Job {
+                        key: cache_key,
+                        bits: key,
+                        source,
+                    };
+                    if worker.jobs.send(job).is_err() {
+                        self.worker = None;
+                    }
+                }
+                return Some(pixels.clone());
+            }
         }
-        let crop = item.crop;
-        let cropped = image::imageops::crop_imm(
-            &source.pixels,
-            crop.left,
-            crop.top,
-            crop.width
-                .min(source.pixels.width().saturating_sub(crop.left)),
-            crop.height
-                .min(source.pixels.height().saturating_sub(crop.top)),
-        )
-        .to_image();
-        let pixels = if cropped.dimensions() == (width, height) {
-            cropped
-        } else {
-            image::imageops::resize(&cropped, width, height, filter_type(filter))
-        };
-        let pixels = Arc::new(pixels);
-        self.items.insert((path, item.id), (key, pixels.clone()));
+        let pixels = Arc::new(resample(&source.pixels, key));
+        if let Some(worker) = &mut self.worker {
+            worker.pending.remove(&cache_key);
+        }
+        self.items.insert(cache_key, (key, pixels.clone()));
         Some(pixels)
     }
 
@@ -205,12 +314,12 @@ impl Renderer {
         // Items are resampled to at most their full size; larger zooms sample from that.
         let prepared_scale = scale.min(1.0);
 
+        let mut layers = Vec::new();
         for (index, item) in state.items.iter().enumerate() {
             let bounds = item.bounds();
             let Some(visible) = bounds.intersection(&region) else {
                 continue;
             };
-            let effects = effects_on(state, index);
             let scaled_w = ((f64::from(item.width) * prepared_scale).round() as u32).max(1);
             let scaled_h = ((f64::from(item.height) * prepared_scale).round() as u32).max(1);
             let filter = if preview && prepared_scale < 1.0 {
@@ -218,61 +327,137 @@ impl Renderer {
             } else {
                 item.filter
             };
-            let pixels = self.item_pixels(state, item, scaled_w, scaled_h, filter);
-            let exact = item.quarter_turns().is_some();
-            let x0 = ((visible.x - region.x) * scale).floor().max(0.0) as u32;
-            let y0 = ((visible.y - region.y) * scale).floor().max(0.0) as u32;
-            let x1 = (((visible.right() - region.x) * scale).ceil() as u32).min(width);
-            let y1 = (((visible.bottom() - region.y) * scale).ceil() as u32).min(height);
-            let sx = f64::from(scaled_w) / f64::from(item.width);
-            let sy = f64::from(scaled_h) / f64::from(item.height);
-            // Canvas → item-local mapping, computed once per item (see Item::to_local).
-            let frame = item.frame();
-            let center = frame.center();
-            let (sin, cos) = (-item.rotation).to_radians().sin_cos();
-            let shift = item.shift();
-            let to_local = |p: Point| {
-                let (dx, dy) = (p.x - shift.x - center.x, p.y - shift.y - center.y);
-                Point::new(
-                    center.x + dx * cos - dy * sin - frame.x,
-                    center.y + dx * sin + dy * cos - frame.y,
-                )
-            };
-            for py in y0..y1 {
-                for px in x0..x1 {
-                    let p = Point::new(
-                        region.x + (f64::from(px) + 0.5) / scale,
-                        region.y + (f64::from(py) + 0.5) / scale,
-                    );
-                    let local = to_local(p);
-                    let (lx, ly) = (local.x * sx, local.y * sy);
-                    let color = match &pixels {
-                        Some(pixels) => {
-                            if exact {
-                                sample_nearest(pixels, lx, ly)
-                            } else {
-                                sample_bilinear(pixels, lx, ly)
-                            }
-                        }
-                        None => placeholder(
-                            local.x,
-                            local.y,
-                            f64::from(item.width),
-                            f64::from(item.height),
-                        ),
-                    };
-                    let Some(mut color) = color else { continue };
-                    color[3] *= opacity(item, &effects, p) as f32;
-                    if color[3] <= 0.0 {
-                        continue;
+            let pixels = self.item_pixels(state, item, scaled_w, scaled_h, filter, preview);
+            // A stale preview resample has another size and is stretched (UI-009).
+            let (pixels_w, pixels_h) = pixels
+                .as_ref()
+                .map_or((scaled_w, scaled_h), |p| p.dimensions());
+            layers.push(Layer {
+                item: *item,
+                effects: effects_on(state, index),
+                exact: item.quarter_turns().is_some()
+                    && (pixels_w, pixels_h) == (scaled_w, scaled_h),
+                pixels,
+                sx: f64::from(pixels_w) / f64::from(item.width),
+                sy: f64::from(pixels_h) / f64::from(item.height),
+                x0: ((visible.x - region.x) * scale).floor().max(0.0) as u32,
+                y0: ((visible.y - region.y) * scale).floor().max(0.0) as u32,
+                x1: (((visible.right() - region.x) * scale).ceil() as u32).min(width),
+                y1: (((visible.bottom() - region.y) * scale).ceil() as u32).min(height),
+            });
+        }
+        if layers.is_empty() || width == 0 {
+            return;
+        }
+
+        // Bands of rows are composited in parallel, each through all layers in order.
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let band_rows = height.div_ceil(threads as u32).max(16);
+        let row_bytes = width as usize * 4;
+        std::thread::scope(|scope| {
+            for (band, rows) in out.chunks_mut(band_rows as usize * row_bytes).enumerate() {
+                let layers = &layers;
+                let first_row = band as u32 * band_rows;
+                scope.spawn(move || {
+                    for layer in layers {
+                        layer.draw(rows, first_row, width, region, scale);
                     }
-                    let dst = out.get_pixel_mut(px, py);
-                    let below = dst.0.map(|c| f32::from(c) / 255.0);
-                    let mixed = over(color, below);
-                    dst.0 = mixed.map(to_u8);
+                });
+            }
+        });
+    }
+}
+
+/// One item prepared for compositing.
+struct Layer {
+    item: Item,
+    effects: Vec<Effect>,
+    pixels: Option<Arc<RgbaImage>>,
+    exact: bool,
+    /// Resampled pixels per item pixel.
+    sx: f64,
+    sy: f64,
+    /// Output pixels the item covers.
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+}
+
+impl Layer {
+    /// Composites the layer over `rows`, output rows starting at `first_row`.
+    fn draw(&self, rows: &mut [u8], first_row: u32, width: u32, region: Rect, scale: f64) {
+        let item = &self.item;
+        let row_count = (rows.len() / (width as usize * 4)) as u32;
+        let y0 = self.y0.max(first_row);
+        let y1 = self.y1.min(first_row + row_count);
+        // Canvas → item-local mapping, computed once per item (see Item::to_local).
+        let frame = item.frame();
+        let center = frame.center();
+        let (sin, cos) = (-item.rotation).to_radians().sin_cos();
+        let shift = item.shift();
+        let to_local = |p: Point| {
+            let (dx, dy) = (p.x - shift.x - center.x, p.y - shift.y - center.y);
+            Point::new(
+                center.x + dx * cos - dy * sin - frame.x,
+                center.y + dx * sin + dy * cos - frame.y,
+            )
+        };
+        for py in y0..y1 {
+            for px in self.x0..self.x1 {
+                let p = Point::new(
+                    region.x + (f64::from(px) + 0.5) / scale,
+                    region.y + (f64::from(py) + 0.5) / scale,
+                );
+                let local = to_local(p);
+                let (lx, ly) = (local.x * self.sx, local.y * self.sy);
+                let color = match &self.pixels {
+                    Some(pixels) => {
+                        if self.exact {
+                            sample_nearest(pixels, lx, ly)
+                        } else {
+                            sample_bilinear(pixels, lx, ly)
+                        }
+                    }
+                    None => placeholder(
+                        local.x,
+                        local.y,
+                        f64::from(item.width),
+                        f64::from(item.height),
+                    ),
+                };
+                let Some(mut color) = color else { continue };
+                color[3] *= opacity(item, &self.effects, p) as f32;
+                if color[3] <= 0.0 {
+                    continue;
+                }
+                let at = ((py - first_row) * width + px) as usize * 4;
+                let dst = &mut rows[at..at + 4];
+                let below = [0, 1, 2, 3].map(|i| f32::from(dst[i]) / 255.0);
+                let mixed = over(color, below);
+                for (d, v) in dst.iter_mut().zip(mixed) {
+                    *d = to_u8(v);
                 }
             }
         }
+    }
+}
+
+/// Crops `source` and resamples it to the size in `bits` (see [`ItemKey::bits`]).
+fn resample(source: &RgbaImage, bits: ItemKeyBits) -> RgbaImage {
+    let (left, top, crop_w, crop_h, width, height, filter) = bits;
+    let cropped = image::imageops::crop_imm(
+        source,
+        left,
+        top,
+        crop_w.min(source.width().saturating_sub(left)),
+        crop_h.min(source.height().saturating_sub(top)),
+    )
+    .to_image();
+    if cropped.dimensions() == (width, height) {
+        cropped
+    } else {
+        image::imageops::resize(&cropped, width, height, filter_type(filter))
     }
 }
 

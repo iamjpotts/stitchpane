@@ -213,6 +213,20 @@ fn filters(list: &[FileFilter]) -> gio::ListStore {
     store
 }
 
+/// UI-007: file dialogs start in the folder of the last file picked or saved.
+fn start_in_last_folder(ui: &Rc<Ui>, dialog: &FileDialog) {
+    if let Some(folder) = ui.editor.borrow().dialog_folder() {
+        dialog.set_initial_folder(Some(&gio::File::for_path(folder)));
+    }
+}
+
+/// The picked file's path, remembered for the next file dialog (UI-007).
+fn picked(ui: &Rc<Ui>, file: &gio::File) -> Option<PathBuf> {
+    let path = file.path()?;
+    ui.editor.borrow_mut().remember_folder(&path);
+    Some(path)
+}
+
 async fn pick_files(ui: &Rc<Ui>, title: &str, with_projects: bool) -> Vec<PathBuf> {
     let all = image_filter();
     if with_projects {
@@ -229,11 +243,12 @@ async fn pick_files(ui: &Rc<Ui>, title: &str, with_projects: bool) -> Vec<PathBu
         .modal(true)
         .filters(&filters(&list))
         .build();
+    start_in_last_folder(ui, &dialog);
     let Ok(files) = dialog.open_multiple_future(Some(&ui.window)).await else {
         return Vec::new();
     };
     (0..files.n_items())
-        .filter_map(|i| files.item(i)?.downcast::<gio::File>().ok()?.path())
+        .filter_map(|i| picked(ui, &files.item(i)?.downcast::<gio::File>().ok()?))
         .collect()
 }
 
@@ -288,10 +303,11 @@ async fn save_as(ui: &Rc<Ui>) -> bool {
         .initial_name(name)
         .filters(&filters(&[project_filter()]))
         .build();
+    start_in_last_folder(ui, &dialog);
     let Ok(file) = dialog.save_future(Some(&ui.window)).await else {
         return false;
     };
-    let Some(path) = file.path() else {
+    let Some(path) = picked(ui, &file) else {
         return false;
     };
     let result = ui.editor.borrow_mut().save_as(&path);
@@ -806,10 +822,11 @@ fn locate(ui: &Rc<Ui>, source: SourceId) {
             .modal(true)
             .filters(&filters(&[image_filter()]))
             .build();
+        start_in_last_folder(&ui, &dialog);
         let Ok(file) = dialog.open_future(Some(&ui.window)).await else {
             return;
         };
-        if let Some(path) = file.path() {
+        if let Some(path) = picked(&ui, &file) {
             ui.editor.borrow_mut().relink(source, &path);
             ui.refresh();
         }
@@ -836,10 +853,13 @@ fn export(ui: &Rc<Ui>) {
             .modal(true)
             .initial_name(format!("{stem}.png"))
             .build();
+        start_in_last_folder(&ui, &dialog);
         let Ok(file) = dialog.save_future(Some(&ui.window)).await else {
             return;
         };
-        let Some(path) = file.path() else { return };
+        let Some(path) = picked(&ui, &file) else {
+            return;
+        };
         if ui.editor.borrow().export_overwrites_source(&path) {
             let choice = gtk4::AlertDialog::builder()
                 .message("Overwrite a source image?")

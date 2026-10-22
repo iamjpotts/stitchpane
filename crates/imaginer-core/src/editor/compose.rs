@@ -224,6 +224,9 @@ impl Editor {
         }
         project.mark_saved();
         self.replace_project(project, None);
+        if let Some(path) = paths.last() {
+            self.remember_folder(path);
+        }
         Ok(())
     }
 
@@ -252,6 +255,7 @@ impl Editor {
                     (center(width, w), center(height, h))
                 }
             };
+            self.remember_folder(&path);
             let source = self.project.add_source(path);
             let id = self.project.state().next_item_id();
             if !self.record(Step::AddItem {

@@ -53,6 +53,7 @@ pub(crate) struct Ui {
     editor: RefCell<Editor>,
     window: ApplicationWindow,
     canvas: DrawingArea,
+    save: Button,
     undo: Button,
     redo: Button,
     menu: MenuButton,
@@ -67,6 +68,8 @@ pub(crate) struct Ui {
     drag_start: Cell<Point>,
     /// Suppresses control callbacks while refresh() updates them.
     updating: Cell<bool>,
+    /// Whether a timer is waiting for background resamples (UI-009).
+    polling: Cell<bool>,
 }
 
 fn modifiers(state: gdk::ModifierType) -> Modifiers {
@@ -126,10 +129,13 @@ impl Ui {
         open.set_tooltip_text(Some("Open (Ctrl+O)"));
         let add = Button::from_icon_name("list-add-symbolic");
         add.set_tooltip_text(Some("Add images"));
+        let save = Button::from_icon_name("document-save-symbolic");
+        save.set_tooltip_text(Some("Save (Ctrl+S)"));
         let undo = Button::from_icon_name("edit-undo-symbolic");
         let redo = Button::from_icon_name("edit-redo-symbolic");
         header.pack_start(&open);
         header.pack_start(&add);
+        header.pack_start(&save);
         header.pack_start(&undo);
         header.pack_start(&redo);
         let menu = MenuButton::builder()
@@ -222,10 +228,13 @@ impl Ui {
         layout.append(&status_bar);
         window.set_child(Some(&layout));
 
+        let mut editor = Editor::new();
+        editor.set_background_rendering(true);
         let ui = Rc::new(Ui {
-            editor: RefCell::new(Editor::new()),
+            editor: RefCell::new(editor),
             window: window.clone(),
             canvas: canvas.clone(),
+            save: save.clone(),
             undo: undo.clone(),
             redo: redo.clone(),
             menu,
@@ -238,6 +247,7 @@ impl Ui {
             pointer: Cell::new(Point::default()),
             drag_start: Cell::new(Point::default()),
             updating: Cell::new(false),
+            polling: Cell::new(false),
         });
 
         // Callbacks hold weak references; the window owns the UI until it is destroyed.
@@ -261,6 +271,7 @@ impl Ui {
         };
         open.connect_clicked(on(Command::Open));
         add.connect_clicked(on(Command::AddImages));
+        save.connect_clicked(on(Command::Save));
         undo.connect_clicked(on(Command::Undo));
         redo.connect_clicked(on(Command::Redo));
         let weak = Rc::downgrade(&ui);
@@ -617,14 +628,18 @@ impl Ui {
         });
     }
 
-    fn draw(&self, cr: &cairo::Context, w: i32, h: i32) {
-        let (frame, labels) = {
+    fn draw(self: &Rc<Self>, cr: &cairo::Context, w: i32, h: i32) {
+        let (frame, labels, busy) = {
             let mut editor = self.editor.borrow_mut();
             if editor.view().viewport != (f64::from(w), f64::from(h)) {
                 editor.set_viewport(f64::from(w), f64::from(h));
             }
-            (editor.frame(), editor.labels())
+            editor.poll_background();
+            (editor.frame(), editor.labels(), editor.background_busy())
         };
+        if busy {
+            self.poll_background();
+        }
         let (fw, fh) = frame.dimensions();
         let mut data = Vec::with_capacity(frame.as_raw().len());
         for p in frame.pixels() {
@@ -661,6 +676,32 @@ impl Ui {
                 let _ = cr.show_text(&text);
             }
         }
+    }
+
+    /// UI-009: redraws as background resamples arrive, until none are left.
+    fn poll_background(self: &Rc<Self>) {
+        if self.polling.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        glib::timeout_add_local(std::time::Duration::from_millis(15), move || {
+            let Some(ui) = weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let (arrived, busy) = {
+                let mut editor = ui.editor.borrow_mut();
+                (editor.poll_background(), editor.background_busy())
+            };
+            if arrived {
+                ui.canvas.queue_draw();
+            }
+            if busy {
+                glib::ControlFlow::Continue
+            } else {
+                ui.polling.set(false);
+                glib::ControlFlow::Break
+            }
+        });
     }
 
     fn update_cursor(&self) {
@@ -727,6 +768,7 @@ impl Ui {
         {
             let mut editor = self.editor.borrow_mut();
             self.window.set_title(Some(&editor.title()));
+            self.save.set_sensitive(!editor.is_empty());
             self.undo.set_sensitive(editor.can_undo());
             self.redo.set_sensitive(editor.can_redo());
             self.undo.set_tooltip_text(Some(
@@ -872,6 +914,14 @@ mod tests {
         // spec: PROJ-005 — missing sources are reported with a way to locate them.
         let project = dir.join("p.imaginer");
         ui.editor.borrow_mut().save_as(&project).expect("save");
+
+        // spec: UI-008 — the header bar's Save button saves to the project's file.
+        assert!(ui.save.is_sensitive());
+        ui.editor.borrow_mut().strip_metadata(ItemId(1));
+        assert!(ui.editor.borrow().is_dirty());
+        ui.save.emit_clicked();
+        while glib::MainContext::default().iteration(false) {}
+        assert!(!ui.editor.borrow().is_dirty());
         std::fs::remove_file(&photo).expect("delete");
         ui.editor.borrow_mut().open(&project).expect("open project");
         ui.refresh();

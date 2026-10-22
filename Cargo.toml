@@ -35,3 +35,7 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# rendering runs per frame; keep the canvas responsive in dev builds (UI-009)
+[profile.dev.package.imaginer-core]
+opt-level = 3

@@ -117,3 +117,33 @@ Feature: User interface behavior shared by both UIs
     When I select the transition
     And I press "Shift+Left"
     Then the seam is at 70 with a band 20 wide
+
+  @UI-007
+  Scenario: File dialogs start in the folder of the last file
+    Given a "blue" image "photos/b.png" of 40 by 30 pixels
+    Then file dialogs start in the default folder
+    When I open "photos/b.png"
+    Then file dialogs start in the folder of "photos/b.png"
+    When I save the project as "projects/p.imaginer"
+    Then file dialogs start in the folder of "projects/p.imaginer"
+    When I add "a.png"
+    Then file dialogs start in the folder of "a.png"
+    When I export to "photos/out.png"
+    Then file dialogs start in the folder of "photos/out.png"
+    When I pick "elsewhere/c.png" in a file dialog
+    Then file dialogs start in the folder of "elsewhere/c.png"
+    When I open "projects/p.imaginer"
+    Then file dialogs start in the folder of "projects/p.imaginer"
+
+  @UI-009
+  Scenario: Resizing draws without waiting for the image to be resampled
+    Given the screen is resampled in the background
+    And I open "a.png"
+    And the view is at 100% with the canvas origin on screen at 50, 50
+    When I select image 1
+    And the canvas is drawn
+    And I move the pointer from 100, 50 to 200, 100 without releasing
+    Then the frame is drawn while images are still being resampled
+    When I release the pointer at 200, 100
+    And the background resampling finishes
+    Then the frame matches one drawn without background resampling

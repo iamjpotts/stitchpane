@@ -308,3 +308,20 @@ fn unsaved(world: &mut World) {
 fn saved(world: &mut World) {
     assert!(!world.editor.needs_save_prompt());
 }
+
+#[when(expr = "I pick {string} in a file dialog")]
+fn pick_in_dialog(world: &mut World, file: String) {
+    let path = world.path(&file);
+    world.editor.remember_folder(&path);
+}
+
+#[then("file dialogs start in the default folder")]
+fn dialogs_default(world: &mut World) {
+    assert_eq!(world.editor.dialog_folder(), None);
+}
+
+#[then(expr = "file dialogs start in the folder of {string}")]
+fn dialogs_start_in(world: &mut World, file: String) {
+    let path = world.path(&file);
+    assert_eq!(world.editor.dialog_folder(), path.parent());
+}

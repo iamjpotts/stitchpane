@@ -126,16 +126,30 @@ fn image_extensions() -> Vec<&'static str> {
         .collect()
 }
 
-fn pick(purpose: Purpose, title: &'static str, multiple: bool, projects: bool) -> Task<Message> {
+/// A file dialog starting in the folder of the last file picked or saved (UI-007).
+fn file_dialog(app: &App, title: &str) -> rfd::AsyncFileDialog {
+    let dialog = rfd::AsyncFileDialog::new().set_title(title);
+    match app.editor.dialog_folder() {
+        Some(folder) => dialog.set_directory(folder),
+        None => dialog,
+    }
+}
+
+fn pick(
+    app: &App,
+    purpose: Purpose,
+    title: &'static str,
+    multiple: bool,
+    projects: bool,
+) -> Task<Message> {
+    let dialog = file_dialog(app, title);
     Task::perform(
         async move {
             let mut exts = image_extensions();
             if projects {
                 exts.push(project_file::EXTENSION);
             }
-            let dialog = rfd::AsyncFileDialog::new()
-                .set_title(title)
-                .add_filter("Images", &exts);
+            let dialog = dialog.add_filter("Images", &exts);
             let files = if multiple {
                 dialog.pick_files().await.unwrap_or_default()
             } else {
@@ -147,11 +161,11 @@ fn pick(purpose: Purpose, title: &'static str, multiple: bool, projects: bool) -
     )
 }
 
-fn save_file(purpose: Purpose, title: &'static str, name: String) -> Task<Message> {
+fn save_file(app: &App, purpose: Purpose, title: &'static str, name: String) -> Task<Message> {
+    let dialog = file_dialog(app, title);
     Task::perform(
         async move {
-            rfd::AsyncFileDialog::new()
-                .set_title(title)
+            dialog
                 .set_file_name(name)
                 .save_file()
                 .await
@@ -172,13 +186,13 @@ fn save_project(app: &mut App, after: AfterDiscard) -> Task<Message> {
         return proceed(app, after);
     }
     let name = format!("Untitled.{}", project_file::EXTENSION);
-    save_file(Purpose::SaveAs(after), "Save project", name)
+    save_file(app, Purpose::SaveAs(after), "Save project", name)
 }
 
-fn proceed(_app: &mut App, after: AfterDiscard) -> Task<Message> {
+fn proceed(app: &mut App, after: AfterDiscard) -> Task<Message> {
     match after {
         AfterDiscard::Nothing => Task::none(),
-        AfterDiscard::Open => pick(Purpose::Open, "Open", true, true),
+        AfterDiscard::Open => pick(app, Purpose::Open, "Open", true, true),
         AfterDiscard::Quit => iced::exit(),
     }
 }
@@ -192,12 +206,13 @@ pub fn run(app: &mut App, command: Command) -> Task<Message> {
                 app.modal = Some(Modal::ConfirmDiscard(AfterDiscard::Open));
                 Task::none()
             } else {
-                pick(Purpose::Open, "Open", true, true)
+                pick(app, Purpose::Open, "Open", true, true)
             }
         }
-        Command::AddImages => pick(Purpose::AddImages, "Add images", true, false),
+        Command::AddImages => pick(app, Purpose::AddImages, "Add images", true, false),
         Command::Save => save_project(app, AfterDiscard::Nothing),
         Command::SaveAs => save_file(
+            app,
             Purpose::SaveAs(AfterDiscard::Nothing),
             "Save project",
             format!("Untitled.{}", project_file::EXTENSION),
@@ -213,7 +228,7 @@ pub fn run(app: &mut App, command: Command) -> Task<Message> {
                 .and_then(|p| p.file_stem())
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "export".to_owned());
-            save_file(Purpose::Export, "Export", format!("{stem}.png"))
+            save_file(app, Purpose::Export, "Export", format!("{stem}.png"))
         }
         Command::CanvasSize => {
             let (w, h) = state.canvas_size();
@@ -330,7 +345,7 @@ pub fn run(app: &mut App, command: Command) -> Task<Message> {
             Task::none()
         }
         Command::LocateSource(source) => {
-            pick(Purpose::Locate(source), "Locate image", false, false)
+            pick(app, Purpose::Locate(source), "Locate image", false, false)
         }
         other => {
             app.editor.execute(other);
@@ -344,6 +359,7 @@ pub fn picked(app: &mut App, purpose: Purpose, paths: Vec<PathBuf>) -> Task<Mess
     let Some(first) = paths.first().cloned() else {
         return Task::none();
     };
+    app.editor.remember_folder(&first);
     let result = match purpose {
         Purpose::Open if paths.len() == 1 => app.editor.open(&first),
         Purpose::Open => {

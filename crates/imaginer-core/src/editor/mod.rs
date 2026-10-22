@@ -195,6 +195,8 @@ pub struct Editor {
     /// Background and checkerboard, keyed by viewport size and canvas position.
     background: Option<(overlay::BackgroundKey, image::RgbaImage)>,
     message: Option<String>,
+    /// Folder of the file most recently picked, opened, saved or exported (UI-007).
+    last_folder: Option<PathBuf>,
 }
 
 impl Default for Editor {
@@ -222,6 +224,7 @@ impl Editor {
             frame_cache: None,
             background: None,
             message: None,
+            last_folder: None,
         };
         editor.fit_view();
         editor
@@ -230,9 +233,49 @@ impl Editor {
     fn replace_project(&mut self, project: Project, path: Option<PathBuf>) {
         let viewport = self.view.viewport;
         let snapping = self.snapping;
+        let last_folder = self.last_folder.take();
+        let background = self.renderer.background();
         *self = Self::with_project(project, path);
         self.snapping = snapping;
+        self.last_folder = last_folder;
+        self.renderer.set_background(background);
         self.set_viewport(viewport.0, viewport.1);
+    }
+
+    /// Makes resampling for the screen happen in a background thread, so drawing never
+    /// waits for it (UI-009). The UI then calls [`Editor::poll_background`] while
+    /// [`Editor::background_busy`] is true and redraws when it returns true.
+    pub fn set_background_rendering(&mut self, enabled: bool) {
+        self.renderer.set_background(enabled);
+    }
+
+    /// Whether background resamples are still being made (UI-009).
+    pub fn background_busy(&self) -> bool {
+        self.renderer.busy()
+    }
+
+    /// Takes finished background resamples. Returns true if the frame needs redrawing.
+    pub fn poll_background(&mut self) -> bool {
+        let arrived = self.renderer.poll();
+        if arrived {
+            self.frame_cache = None;
+        }
+        arrived
+    }
+
+    /// The folder file dialogs should start in (UI-007), if any file was picked yet.
+    pub fn dialog_folder(&self) -> Option<&Path> {
+        self.last_folder.as_deref()
+    }
+
+    /// Notes the file the user picked or saved, for [`Editor::dialog_folder`] (UI-007).
+    pub fn remember_folder(&mut self, file: &Path) {
+        let Ok(file) = std::path::absolute(file) else {
+            return;
+        };
+        if let Some(folder) = file.parent() {
+            self.last_folder = Some(folder.to_path_buf());
+        }
     }
 
     pub fn project(&self) -> &Project {
@@ -679,7 +722,8 @@ impl Editor {
             .is_some_and(|e| e.eq_ignore_ascii_case(project_file::EXTENSION));
         if is_project {
             let project = project_file::load(&path).map_err(|e| e.to_string())?;
-            self.replace_project(project, Some(path));
+            self.replace_project(project, Some(path.clone()));
+            self.remember_folder(&path);
             Ok(())
         } else {
             self.open_images(&[path])
@@ -721,6 +765,7 @@ impl Editor {
             path.set_file_name(name);
         }
         project_file::save(&mut self.project, &path).map_err(|e| e.to_string())?;
+        self.remember_folder(&path);
         self.path = Some(path);
         Ok(())
     }
@@ -822,6 +867,7 @@ impl Editor {
         let Ok(path) = std::path::absolute(path) else {
             return false;
         };
+        self.remember_folder(&path);
         self.renderer.forget(&path);
         if let Some(old) = self.project.state().sources.get(&source).cloned() {
             self.renderer.forget(&old);
@@ -884,7 +930,9 @@ impl Editor {
             dpi: state.canvas.dpi,
             exif: exif.filter(|_| settings.format.supports_exif()),
         };
-        codec::write(&pixels, &settings.path, &options).map_err(|e| e.to_string())
+        codec::write(&pixels, &settings.path, &options).map_err(|e| e.to_string())?;
+        self.remember_folder(&settings.path);
+        Ok(())
     }
 
     /// Status bar text: canvas size, DPI and zoom.
