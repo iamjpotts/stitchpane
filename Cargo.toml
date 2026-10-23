@@ -3,8 +3,11 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
+description = "Spec-Driven Image Editor In Rust"
 edition = "2024"
-publish = false
+license = "Unlicense"  # this is in conflit with the licenses in use; it is being used to reserve the crate name pending license compliance
+publish = true
+repository = "https://github.com/iamjpotts/stitchpane"
 rust-version = "1.99.1"
 version = "0.1.0"
 
