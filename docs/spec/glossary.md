@@ -19,7 +19,7 @@ The same source may be placed more than once.
 
 **Project** — The sources and the ordered steps applied to them. Saved as a project file.
 
-**Project file** — A `.imaginer` file. See `formats/project-file.md`.
+**Project file** — A `.stitchpane` file. See `formats/project-file.md`.
 
 **Resample** — Change an image's pixel dimensions, computing new pixels.
 

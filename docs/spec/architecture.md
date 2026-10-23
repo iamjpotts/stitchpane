@@ -4,10 +4,10 @@
 
 ```
 crates/
-  imaginer-core   model, steps, rendering, undo history; no UI toolkit
-  imaginer-gtk    GTK 4 UI            -> depends on imaginer-core
-  imaginer-iced   iced UI             -> depends on imaginer-core
-  imaginer        the binary; feature `gtk` (default) or `iced` selects the UI crate
+  stitchpane-core   model, steps, rendering, undo history; no UI toolkit
+  stitchpane-gtk    GTK 4 UI            -> depends on stitchpane-core
+  stitchpane-iced   iced UI             -> depends on stitchpane-core
+  stitchpane        the binary; feature `gtk` (default) or `iced` selects the UI crate
 ```
 
 The split keeps each toolkit's dependency tree (and its licenses) in its own crate, so a
@@ -21,7 +21,7 @@ build contains only the toolkit it uses. See `decisions/0005-workspace-layout.md
 3. The UI asks the core to render the canvas (or a region of it) and displays the result.
 
 All behavior that both UIs share (validation, geometry, transitions, undo) lives in
-`imaginer-core`. UI crates contain only presentation and input handling.
+`stitchpane-core`. UI crates contain only presentation and input handling.
 
 ## Rendering
 

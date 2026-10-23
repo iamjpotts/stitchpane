@@ -4,10 +4,10 @@ Status: Accepted
 
 ## Decision
 
-A Cargo workspace with four crates: `imaginer-core`, `imaginer-gtk`, `imaginer-iced`, and
-the `imaginer` binary, which selects one UI crate by feature (`gtk` default, `iced`
-alternative; mutually exclusive). Licenses influenced this: each toolkit's dependency
-tree, and its license obligations, stays in its own crate.
+A Cargo workspace with four crates: `stitchpane-core`, `stitchpane-gtk`,
+`stitchpane-iced`, and the `stitchpane` binary, which selects one UI crate by feature
+(`gtk` default, `iced` alternative; mutually exclusive). Licenses influenced this: each
+toolkit's dependency tree, and its license obligations, stays in its own crate.
 
 ## Consequences
 

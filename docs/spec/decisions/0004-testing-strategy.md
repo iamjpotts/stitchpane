@@ -6,7 +6,7 @@ Status: Accepted
 
 - **Behavior (middle and top of the pyramid):** cucumber (`cucumber` crate) scenarios in
   `.feature` files, tagged with requirement IDs. Core behavior is tested in
-  `crates/imaginer-core/tests/features/`.
+  `crates/stitchpane-core/tests/features/`.
 - **Units:** ordinary Rust `#[test]` functions for small pieces (geometry, parsing).
 - **UI interactions:** almost all interaction logic (hit testing, dragging, snapping,
   keyboard, menus, status text) lives in the core's `Editor`, so the cucumber scenarios

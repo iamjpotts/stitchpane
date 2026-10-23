@@ -6,15 +6,15 @@ GNOME conventions (header bar, primary menu).
 ## Main window
 
 ```
-+------------------------------------------------------------------+
-| [Open] [Add] [Save] [Undo] [Redo]   Imaginer — trip.imaginer  [≡] |
-+------------------------------------------------------------------+
-|                                                                  |
-|            canvas (zoomable, scrollable, with handles)           |
-|                                                                  |
-+------------------------------------------------------------------+
-| 3000 × 1200 px · 300 DPI · zoom 50%   ⓘ Contains EXIF metadata   |
-+------------------------------------------------------------------+
++------------------------------------------------------------------------+
+| [Open] [Add] [Save] [Undo] [Redo]   Stitch Pane — trip.stitchpane  [≡] |
++------------------------------------------------------------------------+
+|                                                                        |
+|              canvas (zoomable, scrollable, with handles)               |
+|                                                                        |
++------------------------------------------------------------------------+
+| 3000 × 1200 px · 300 DPI · zoom 50%   ⓘ Contains EXIF metadata         |
++------------------------------------------------------------------------+
 ```
 
 ### UI-005: One interface
@@ -39,7 +39,7 @@ something else (UNDO-004).
 ### UI-001: Open an image or project
 Status: Implemented
 
-Open shall accept both images and `.imaginer` project files. Opening an image starts a
+Open shall accept both images and `.stitchpane` project files. Opening an image starts a
 single-image project.
 
 ### UI-002: Unsaved changes

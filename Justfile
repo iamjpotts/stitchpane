@@ -5,19 +5,19 @@ default:
     @just -l
 
 install:
-    @cargo install --path crates/imaginer
+    @cargo install --path crates/stitchpane
 
 # run the app; pass `iced` to use the iced UI instead of GTK
 run ui="gtk":
-    @cargo run -p imaginer --no-default-features --features {{ui}}
+    @cargo run -p stitchpane --no-default-features --features {{ui}}
 
 check:
     @cargo check --workspace --all-targets
-    @cargo check -p imaginer --all-targets --no-default-features --features iced
+    @cargo check -p stitchpane --all-targets --no-default-features --features iced
 
 clippy:
     @cargo clippy --workspace --all-targets -- -D warnings
-    @cargo clippy -p imaginer --all-targets --no-default-features --features iced -- -D warnings
+    @cargo clippy -p stitchpane --all-targets --no-default-features --features iced -- -D warnings
 
 deny:
     @cargo deny check

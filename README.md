@@ -19,7 +19,7 @@ Image editor focused on ease of use.
 
 ## Project Files
 
-References to source image(s) and actions applied can be saved to a .imaginer file.
+References to source image(s) and actions applied can be saved to a .stitchpane file.
 
 It is a yaml file that declares the source images, and the sequence of steps/transitions applied.
 
@@ -43,6 +43,6 @@ Ubuntu 24.04 or later.
 
 # Usage
 
-`imaginer [image or project files…]`. Several images start a composition. Drag images to
+`stitchpane [image or project files…]`. Several images start a composition. Drag images to
 move them, use the handles to resize and rotate, and right-click images, seams and the
 canvas for more. The arrow keys, `[` and `]` make fine adjustments.

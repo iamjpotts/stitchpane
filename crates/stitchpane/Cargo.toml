@@ -1,0 +1,18 @@
+[package]
+name = "stitchpane"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+default = ["gtk"]
+gtk = ["dep:stitchpane-gtk"]
+iced = ["dep:stitchpane-iced"]
+
+[dependencies]
+stitchpane-gtk = { workspace = true, optional = true }
+stitchpane-iced = { workspace = true, optional = true }
+
+[lints]
+workspace = true

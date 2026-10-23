@@ -1,6 +1,6 @@
 # Project file
 
-A project file (`.imaginer`) records a project's sources and the steps applied to them.
+A project file (`.stitchpane`) records a project's sources and the steps applied to them.
 It never contains image data. Format choice: `decisions/0002-project-file-format.md`.
 
 ### PROJ-001: New project is empty
@@ -11,7 +11,7 @@ A new project shall have no sources and no steps.
 ### PROJ-002: Encoding
 Status: Implemented
 
-A project file shall be UTF-8 YAML with the extension `.imaginer`.
+A project file shall be UTF-8 YAML with the extension `.stitchpane`.
 
 ### PROJ-003: Format version
 Status: Implemented

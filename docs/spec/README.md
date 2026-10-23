@@ -1,6 +1,6 @@
 # Specification
 
-This directory is the source of truth for what Imaginer does. Code and tests follow it;
+This directory is the source of truth for what Stitch Pane does. Code and tests follow it;
 when they disagree, the spec wins until the spec is changed.
 
 ## Layout
@@ -11,7 +11,7 @@ when they disagree, the spec wins until the spec is changed.
 | `glossary.md` | Defined terms; specs use these words with exactly these meanings |
 | `non-goals.md` | Things deliberately out of scope |
 | `product/` | Functional requirements, by capability |
-| `formats/` | File formats (the `.imaginer` project file) |
+| `formats/` | File formats (the `.stitchpane` project file) |
 | `ui/` | Workflows, layout, gestures, shortcuts |
 | `architecture.md` | Crates, data flow, where behavior lives |
 | `decisions/` | Architecture decision records (ADRs), numbered, never renumbered |

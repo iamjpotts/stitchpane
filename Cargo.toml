@@ -18,9 +18,9 @@ gtk4 = { version = "0.11", features = ["v4_14"] }
 iced = { version = "0.14", features = ["canvas", "image-without-codecs"] }
 iced_test = "0.14"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
-imaginer-core = { path = "crates/imaginer-core", version = "0.1.0" }
-imaginer-gtk = { path = "crates/imaginer-gtk", version = "0.1.0" }
-imaginer-iced = { path = "crates/imaginer-iced", version = "0.1.0" }
+stitchpane-core = { path = "crates/stitchpane-core", version = "0.1.0" }
+stitchpane-gtk = { path = "crates/stitchpane-gtk", version = "0.1.0" }
+stitchpane-iced = { path = "crates/stitchpane-iced", version = "0.1.0" }
 kamadak-exif = "0.6"
 libheif-rs = { version = "3", default-features = false, features = ["v1_17"] }
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
@@ -37,5 +37,5 @@ opt-level = 1
 opt-level = 3
 
 # rendering runs per frame; keep the canvas responsive in dev builds (UI-009)
-[profile.dev.package.imaginer-core]
+[profile.dev.package.stitchpane-core]
 opt-level = 3

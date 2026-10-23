@@ -2251,49 +2251,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "imaginer"
-version = "0.1.0"
-dependencies = [
- "imaginer-gtk",
- "imaginer-iced",
-]
-
-[[package]]
-name = "imaginer-core"
-version = "0.1.0"
-dependencies = [
- "cucumber",
- "futures",
- "image",
- "kamadak-exif",
- "libheif-rs",
- "serde",
- "tiff",
- "webp",
- "yaml_serde",
-]
-
-[[package]]
-name = "imaginer-gtk"
-version = "0.1.0"
-dependencies = [
- "gtk4",
- "image",
- "imaginer-core",
-]
-
-[[package]]
-name = "imaginer-iced"
-version = "0.1.0"
-dependencies = [
- "iced",
- "iced_test",
- "image",
- "imaginer-core",
- "rfd",
-]
-
-[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4112,6 +4069,49 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "stitchpane"
+version = "0.1.0"
+dependencies = [
+ "stitchpane-gtk",
+ "stitchpane-iced",
+]
+
+[[package]]
+name = "stitchpane-core"
+version = "0.1.0"
+dependencies = [
+ "cucumber",
+ "futures",
+ "image",
+ "kamadak-exif",
+ "libheif-rs",
+ "serde",
+ "tiff",
+ "webp",
+ "yaml_serde",
+]
+
+[[package]]
+name = "stitchpane-gtk"
+version = "0.1.0"
+dependencies = [
+ "gtk4",
+ "image",
+ "stitchpane-core",
+]
+
+[[package]]
+name = "stitchpane-iced"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "iced_test",
+ "image",
+ "rfd",
+ "stitchpane-core",
+]
 
 [[package]]
 name = "strict-num"

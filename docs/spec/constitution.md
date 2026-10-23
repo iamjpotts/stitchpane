@@ -30,5 +30,5 @@ ADR in `decisions/`.
 
 ## Licensing
 
-11. Imaginer is currently unlicensed (private, personal use). Dependency license
+11. Stitch Pane is currently unlicensed (private, personal use). Dependency license
     obligations will be reviewed when a license is chosen.
