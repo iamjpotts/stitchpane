@@ -115,11 +115,11 @@ impl PixelRect {
     }
 
     pub fn right(&self) -> u32 {
-        self.left + self.width
+        self.left.saturating_add(self.width)
     }
 
     pub fn bottom(&self) -> u32 {
-        self.top + self.height
+        self.top.saturating_add(self.height)
     }
 }
 
@@ -145,6 +145,11 @@ fn snap_unit(v: f64) -> f64 {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "tests may panic (RUST-001)"
+)]
 mod tests {
     use super::*;
 

@@ -14,6 +14,7 @@ when they disagree, the spec wins until the spec is changed.
 | `formats/` | File formats (the `.stitchpane` project file) |
 | `ui/` | Workflows, layout, gestures, shortcuts |
 | `architecture.md` | Crates, data flow, where behavior lives |
+| `engineering/` | Coding standards for the implementation (`rust.md`) |
 | `decisions/` | Architecture decision records (ADRs), numbered, never renumbered |
 | `work/` | Transient task lists for in-progress work, deleted when done |
 
@@ -49,6 +50,7 @@ When the user drags a crop handle, the system shall ...
 | `EXPORT` | `product/export.md` |
 | `SMEAR` | `product/retouch.md` |
 | `UI` | `ui/workflows.md` |
+| `RUST` | `engineering/rust.md` |
 
 ## Tests and traceability
 
@@ -56,7 +58,9 @@ Acceptance criteria are written as Given/When/Then scenarios in cucumber `.featu
 files under each crate's `tests/features/`, tagged with the IDs they verify
 (`@CROP-001`). Unit tests reference IDs with a `spec: CROP-001` comment where useful.
 `just spec-check` (part of `just verify`) fails when an `Implemented` requirement has no
-test, or a test names an ID that does not exist. See
+test, or a test names an ID that does not exist. A coding standard is enforced by tooling
+rather than a test, so it names that tooling in an `Enforced by:` line after its status
+line, which counts as its test. See
 `decisions/0004-testing-strategy.md`.
 
 ## Workflow

@@ -1,7 +1,7 @@
 //! Dialogs and menus for commands the editor cannot complete alone.
 
 use std::cell::Cell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gtk4::prelude::*;
@@ -47,7 +47,7 @@ pub(crate) fn run(ui: &Rc<Ui>, command: Command) {
         Command::ExifViewer(item) => exif_viewer(ui, item),
         Command::LocateSource(source) => locate(ui, source),
         other => {
-            ui.editor.borrow_mut().execute(other);
+            ui.edit(|e| e.execute(other));
             ui.refresh();
         }
     }
@@ -215,7 +215,10 @@ fn filters(list: &[FileFilter]) -> gio::ListStore {
 
 /// UI-007: file dialogs start in the folder of the last file picked or saved.
 fn start_in_last_folder(ui: &Rc<Ui>, dialog: &FileDialog) {
-    if let Some(folder) = ui.editor.borrow().dialog_folder() {
+    if let Some(folder) = ui
+        .read(|e| e.dialog_folder().map(Path::to_path_buf))
+        .flatten()
+    {
         dialog.set_initial_folder(Some(&gio::File::for_path(folder)));
     }
 }
@@ -223,7 +226,7 @@ fn start_in_last_folder(ui: &Rc<Ui>, dialog: &FileDialog) {
 /// The picked file's path, remembered for the next file dialog (UI-007).
 fn picked(ui: &Rc<Ui>, file: &gio::File) -> Option<PathBuf> {
     let path = file.path()?;
-    ui.editor.borrow_mut().remember_folder(&path);
+    ui.edit(|e| e.remember_folder(&path));
     Some(path)
 }
 
@@ -254,7 +257,8 @@ async fn pick_files(ui: &Rc<Ui>, title: &str, with_projects: bool) -> Vec<PathBu
 
 /// UI-002: asks whether to save unsaved changes. Returns true to go ahead.
 pub(crate) async fn confirm_discard(ui: &Rc<Ui>) -> bool {
-    if !ui.editor.borrow().needs_save_prompt() {
+    // if the editor is busy, ask rather than risk losing work
+    if !ui.read(|e| e.needs_save_prompt()).unwrap_or(true) {
         return true;
     }
     let choice = gtk4::AlertDialog::builder()
@@ -275,10 +279,15 @@ pub(crate) async fn confirm_discard(ui: &Rc<Ui>) -> bool {
 }
 
 async fn save(ui: &Rc<Ui>) -> bool {
-    if ui.editor.borrow().path().is_none() {
+    let Some(untitled) = ui.read(|e| e.path().is_none()) else {
+        return false;
+    };
+    if untitled {
         return save_as(ui).await;
     }
-    let result = ui.editor.borrow_mut().save();
+    let Some(result) = ui.edit(|e| e.save()) else {
+        return false;
+    };
     ui.refresh();
     match result {
         Ok(()) => true,
@@ -291,11 +300,12 @@ async fn save(ui: &Rc<Ui>) -> bool {
 
 async fn save_as(ui: &Rc<Ui>) -> bool {
     let name = ui
-        .editor
-        .borrow()
-        .path()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().into_owned())
+        .read(|e| {
+            e.path()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+        })
+        .flatten()
         .unwrap_or_else(|| format!("Untitled.{}", project_file::EXTENSION));
     let dialog = FileDialog::builder()
         .title("Save project")
@@ -310,7 +320,9 @@ async fn save_as(ui: &Rc<Ui>) -> bool {
     let Some(path) = picked(ui, &file) else {
         return false;
     };
-    let result = ui.editor.borrow_mut().save_as(&path);
+    let Some(result) = ui.edit(|e| e.save_as(&path)) else {
+        return false;
+    };
     ui.refresh();
     match result {
         Ok(()) => true,
@@ -329,11 +341,10 @@ fn open(ui: &Rc<Ui>) {
             return;
         }
         let paths = pick_files(&ui, "Open", true).await;
-        match paths.len() {
-            0 => {}
-            1 => {
-                let result = ui.editor.borrow_mut().open(&paths[0]);
-                if let Err(e) = result {
+        match paths.as_slice() {
+            [] => {}
+            [path] => {
+                if let Some(Err(e)) = ui.edit(|e| e.open(path)) {
                     ui.error(&e);
                 }
                 ui.refresh();
@@ -351,8 +362,7 @@ fn add_images(ui: &Rc<Ui>) {
         if paths.is_empty() {
             return;
         }
-        let result = ui.editor.borrow_mut().add_images(&paths, None);
-        if let Err(e) = result {
+        if let Some(Err(e)) = ui.edit(|e| e.add_images(&paths, None)) {
             ui.error(&e);
         }
         ui.refresh();
@@ -380,7 +390,9 @@ fn canvas_choice(ui: &Rc<Ui>, paths: Vec<PathBuf>) {
     }
     let custom = CheckButton::with_label("Custom");
     custom.set_group(radios.first());
-    radios[0].set_active(true);
+    if let Some(first) = radios.first() {
+        first.set_active(true);
+    }
     body.append(&custom);
     let width = spin(1.0, 100_000.0, 1.0, 0, 1920.0);
     let height = spin(1.0, 100_000.0, 1.0, 0, 1080.0);
@@ -404,10 +416,12 @@ fn canvas_choice(ui: &Rc<Ui>, paths: Vec<PathBuf>) {
             }
         } else {
             let index = radios.iter().position(|r| r.is_active()).unwrap_or(0);
-            choices[index]
+            let Some(&choice) = choices.get(index) else {
+                return true;
+            };
+            choice
         };
-        let result = ui.editor.borrow_mut().new_composition(&paths, Some(choice));
-        if let Err(e) = result {
+        if let Some(Err(e)) = ui.edit(|e| e.new_composition(&paths, Some(choice))) {
             ui.error(&e);
         }
         true
@@ -416,11 +430,12 @@ fn canvas_choice(ui: &Rc<Ui>, paths: Vec<PathBuf>) {
 
 /// CANVAS-002.
 fn canvas_size(ui: &Rc<Ui>) {
-    let (w, h, current_dpi) = {
-        let editor = ui.editor.borrow();
+    let Some((w, h, current_dpi)) = ui.read(|editor| {
         let state = editor.project().state();
         let (w, h) = state.canvas_size();
         (w, h, state.canvas.dpi)
+    }) else {
+        return;
     };
     let width = spin(1.0, 100_000.0, 1.0, 0, f64::from(w.max(1)));
     let height = spin(1.0, 100_000.0, 1.0, 0, f64::from(h.max(1)));
@@ -436,26 +451,28 @@ fn canvas_size(ui: &Rc<Ui>) {
         ("DPI", dpi_row.upcast_ref()),
     ]);
     dialog(ui, "Canvas size", &body, "Apply", move |ui| {
-        ui.editor.borrow_mut().set_canvas_size(
-            width.value() as u32,
-            height.value() as u32,
-            use_dpi.is_active().then(|| dpi.value()),
-        );
+        ui.edit(|e| {
+            e.set_canvas_size(
+                width.value() as u32,
+                height.value() as u32,
+                use_dpi.is_active().then(|| dpi.value()),
+            );
+        });
         true
     });
 }
 
 /// RES-003.
 fn set_dpi(ui: &Rc<Ui>) {
-    let current = ui.editor.borrow().project().state().canvas.dpi;
+    let Some(current) = ui.read(|e| e.project().state().canvas.dpi) else {
+        return;
+    };
     let use_dpi = CheckButton::with_label("Set DPI");
     use_dpi.set_active(true);
     let dpi = spin(1.0, 10_000.0, 1.0, 0, current.unwrap_or(300.0));
     let body = form(&[("", use_dpi.upcast_ref()), ("DPI", dpi.upcast_ref())]);
     dialog(ui, "Set DPI", &body, "Apply", move |ui| {
-        ui.editor
-            .borrow_mut()
-            .set_dpi(use_dpi.is_active().then(|| dpi.value()));
+        ui.edit(|e| e.set_dpi(use_dpi.is_active().then(|| dpi.value())));
         true
     });
 }
@@ -488,7 +505,10 @@ fn lock_aspect(a: &SpinButton, b: &SpinButton, lock: &CheckButton, ratio: f64) {
 
 /// RES-001, RES-002.
 fn resize(ui: &Rc<Ui>, item: ItemId) {
-    let Some(i) = ui.editor.borrow().project().state().item(item).copied() else {
+    let Some(i) = ui
+        .read(|e| e.project().state().item(item).copied())
+        .flatten()
+    else {
         return;
     };
     let width = spin(1.0, 100_000.0, 1.0, 0, f64::from(i.width));
@@ -511,21 +531,26 @@ fn resize(ui: &Rc<Ui>, item: ItemId) {
         } else {
             height.value() as u32
         };
-        let filter = Filter::ALL[filter.selected() as usize];
-        ui.editor.borrow_mut().resize_item(item, w, h, filter);
+        let filter = Filter::ALL
+            .get(filter.selected() as usize)
+            .copied()
+            .unwrap_or_default();
+        ui.edit(|e| e.resize_item(item, w, h, filter));
         true
     });
 }
 
 /// RES-004.
 fn print_size(ui: &Rc<Ui>, item: ItemId) {
-    let (i, dpi0) = {
-        let editor = ui.editor.borrow();
-        let state = editor.project().state();
-        let Some(i) = state.item(item).copied() else {
-            return;
-        };
-        (i, state.canvas.dpi.unwrap_or(300.0))
+    let Some((i, dpi0)) = ui
+        .read(|editor| {
+            let state = editor.project().state();
+            let i = state.item(item).copied()?;
+            Some((i, state.canvas.dpi.unwrap_or(300.0)))
+        })
+        .flatten()
+    else {
+        return;
     };
     let unit = dropdown(&["inches", "cm"], 0);
     let width = spin(0.01, 10_000.0, 0.1, 2, f64::from(i.width) / dpi0);
@@ -568,14 +593,20 @@ fn print_size(ui: &Rc<Ui>, item: ItemId) {
         } else {
             PrintUnit::Inches
         };
-        ui.editor.borrow_mut().set_print_size(
-            item,
-            width.value(),
-            height.value(),
-            unit,
-            dpi.value(),
-            Filter::ALL[filter.selected() as usize],
-        );
+        let filter = Filter::ALL
+            .get(filter.selected() as usize)
+            .copied()
+            .unwrap_or_default();
+        ui.edit(|e| {
+            e.set_print_size(
+                item,
+                width.value(),
+                height.value(),
+                unit,
+                dpi.value(),
+                filter,
+            );
+        });
         true
     });
 }
@@ -583,24 +614,22 @@ fn print_size(ui: &Rc<Ui>, item: ItemId) {
 /// PLACE-008.
 fn rotate(ui: &Rc<Ui>, item: ItemId) {
     let current = ui
-        .editor
-        .borrow()
-        .project()
-        .state()
-        .item(item)
-        .map(|i| i.rotation)
+        .read(|e| e.project().state().item(item).map(|i| i.rotation))
+        .flatten()
         .unwrap_or(0.0);
     let angle = spin(-360.0, 360.0, 0.1, 1, current);
     let body = form(&[("Angle (degrees, clockwise)", angle.upcast_ref())]);
     dialog(ui, "Rotate", &body, "Rotate", move |ui| {
-        ui.editor.borrow_mut().rotate_to(item, angle.value());
+        ui.edit(|e| e.rotate_to(item, angle.value()));
         true
     });
 }
 
 /// BLEND-007.
 fn feather(ui: &Rc<Ui>, item: ItemId) {
-    let f = ui.editor.borrow().default_feather(item);
+    let Some(f) = ui.read(|e| e.default_feather(item)) else {
+        return;
+    };
     let edges = [
         CheckButton::with_label("Left"),
         CheckButton::with_label("Right"),
@@ -628,18 +657,22 @@ fn feather(ui: &Rc<Ui>, item: ItemId) {
             top: edges[2].is_active(),
             bottom: edges[3].is_active(),
             width: width.value(),
-            curve: Curve::ALL[curve.selected() as usize],
+            curve: Curve::ALL
+                .get(curve.selected() as usize)
+                .copied()
+                .unwrap_or_default(),
         };
-        ui.editor
-            .borrow_mut()
-            .set_feather(item, feather.any_edge().then_some(feather));
+        ui.edit(|e| e.set_feather(item, feather.any_edge().then_some(feather)));
         true
     });
 }
 
 /// BLEND-003, BLEND-008.
 fn transition(ui: &Rc<Ui>, id: TransitionId) {
-    let Some(t) = ui.editor.borrow().project().state().transition(id).copied() else {
+    let Some(t) = ui
+        .read(|e| e.project().state().transition(id).copied())
+        .flatten()
+    else {
         return;
     };
     let remove = Button::with_label("Remove transition");
@@ -669,15 +702,16 @@ fn transition(ui: &Rc<Ui>, id: TransitionId) {
                 } else {
                     Orientation::Horizontal
                 };
-                ui.editor.borrow_mut().edit_transition(
-                    id,
-                    TransitionKind::GradientSeam {
-                        orientation,
-                        offset,
-                        width: band.value(),
-                        curve: Curve::ALL[curve_dd.selected() as usize],
-                    },
-                );
+                let kind = TransitionKind::GradientSeam {
+                    orientation,
+                    offset,
+                    width: band.value(),
+                    curve: Curve::ALL
+                        .get(curve_dd.selected() as usize)
+                        .copied()
+                        .unwrap_or_default(),
+                };
+                ui.edit(|e| e.edit_transition(id, kind));
                 true
             })
         }
@@ -688,12 +722,10 @@ fn transition(ui: &Rc<Ui>, id: TransitionId) {
                 ("", remove.upcast_ref()),
             ]);
             dialog(ui, "Crossfade", &body, "Apply", move |ui| {
-                ui.editor.borrow_mut().edit_transition(
-                    id,
-                    TransitionKind::Crossfade {
-                        ratio: percent.value() / 100.0,
-                    },
-                );
+                let kind = TransitionKind::Crossfade {
+                    ratio: percent.value() / 100.0,
+                };
+                ui.edit(|e| e.edit_transition(id, kind));
                 true
             })
         }
@@ -709,16 +741,23 @@ fn transition(ui: &Rc<Ui>, id: TransitionId) {
 
 /// META-002 to META-004.
 fn exif_viewer(ui: &Rc<Ui>, item: Option<ItemId>) {
-    let items = ui.editor.borrow_mut().items_with_exif();
+    let Some((items, names)) = ui.edit(|e| {
+        let items = e.items_with_exif();
+        let names: Vec<String> = items.iter().map(|&i| e.item_name(i)).collect();
+        (items, names)
+    }) else {
+        return;
+    };
     if items.is_empty() {
         ui.error("No image has EXIF metadata.");
         return;
     }
-    let current = item.filter(|i| items.contains(i)).unwrap_or(items[0]);
-    let names: Vec<String> = items
-        .iter()
-        .map(|&i| ui.editor.borrow().item_name(i))
-        .collect();
+    let Some(current) = item
+        .filter(|i| items.contains(i))
+        .or(items.first().copied())
+    else {
+        return;
+    };
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let chooser = dropdown(
         &name_refs,
@@ -745,7 +784,7 @@ fn exif_viewer(ui: &Rc<Ui>, item: Option<ItemId>) {
             while let Some(child) = table.first_child() {
                 table.remove(&child);
             }
-            let entries = ui.editor.borrow_mut().exif_entries(item);
+            let entries = ui.edit(|e| e.exif_entries(item)).unwrap_or_default();
             let grid = Grid::builder().row_spacing(4).column_spacing(16).build();
             let mut row = 0;
             let mut group = None;
@@ -757,7 +796,7 @@ fn exif_viewer(ui: &Rc<Ui>, item: Option<ItemId>) {
                     header.set_halign(Align::Start);
                     header.set_margin_top(if row == 0 { 0 } else { 10 });
                     grid.attach(&header, 0, row, 2, 1);
-                    row += 1;
+                    row = row.saturating_add(1);
                 }
                 let name = Label::new(Some(&entry.name));
                 name.set_halign(Align::Start);
@@ -768,7 +807,7 @@ fn exif_viewer(ui: &Rc<Ui>, item: Option<ItemId>) {
                 value.set_wrap(true);
                 grid.attach(&name, 0, row, 1, 1);
                 grid.attach(&value, 1, row, 1, 1);
-                row += 1;
+                row = row.saturating_add(1);
             }
             table.append(&grid);
         }
@@ -779,9 +818,10 @@ fn exif_viewer(ui: &Rc<Ui>, item: Option<ItemId>) {
     let items_for_chooser = items.clone();
     let fill_for_chooser = fill.clone();
     chooser.connect_selected_notify(move |c| {
-        let item = items_for_chooser[c.selected() as usize];
-        s.set(item);
-        fill_for_chooser(item);
+        if let Some(&item) = items_for_chooser.get(c.selected() as usize) {
+            s.set(item);
+            fill_for_chooser(item);
+        }
     });
 
     let window = Window::builder()
@@ -805,7 +845,7 @@ fn exif_viewer(ui: &Rc<Ui>, item: Option<ItemId>) {
     let weak = Rc::downgrade(ui);
     strip.connect_clicked(move |_| {
         if let Some(ui) = weak.upgrade() {
-            ui.editor.borrow_mut().strip_metadata(selected.get());
+            ui.edit(|e| e.strip_metadata(selected.get()));
             ui.refresh();
         }
         w.close();
@@ -827,7 +867,7 @@ fn locate(ui: &Rc<Ui>, source: SourceId) {
             return;
         };
         if let Some(path) = picked(&ui, &file) {
-            ui.editor.borrow_mut().relink(source, &path);
+            ui.edit(|e| e.relink(source, &path));
             ui.refresh();
         }
     });
@@ -837,17 +877,20 @@ fn locate(ui: &Rc<Ui>, source: SourceId) {
 fn export(ui: &Rc<Ui>) {
     let ui = ui.clone();
     glib::spawn_future_local(async move {
-        if ui.editor.borrow().is_empty() {
+        let Some((empty, stem)) = ui.read(|e| {
+            let stem = e
+                .path()
+                .and_then(|p| p.file_stem())
+                .map(|s| s.to_string_lossy().into_owned());
+            (e.is_empty(), stem)
+        }) else {
+            return;
+        };
+        if empty {
             ui.error("There is nothing to export.");
             return;
         }
-        let stem = ui
-            .editor
-            .borrow()
-            .path()
-            .and_then(|p| p.file_stem())
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "export".to_owned());
+        let stem = stem.unwrap_or_else(|| "export".to_owned());
         let dialog = FileDialog::builder()
             .title("Export")
             .modal(true)
@@ -860,7 +903,10 @@ fn export(ui: &Rc<Ui>) {
         let Some(path) = picked(&ui, &file) else {
             return;
         };
-        if ui.editor.borrow().export_overwrites_source(&path) {
+        let Some(overwrites) = ui.read(|e| e.export_overwrites_source(&path)) else {
+            return;
+        };
+        if overwrites {
             let choice = gtk4::AlertDialog::builder()
                 .message("Overwrite a source image?")
                 .detail(format!(
@@ -883,7 +929,13 @@ fn export(ui: &Rc<Ui>) {
 }
 
 fn export_options(ui: &Rc<Ui>, path: PathBuf) {
-    let defaults = ui.editor.borrow_mut().export_defaults(&path);
+    let Some((defaults, items, item_names)) = ui.edit(|e| {
+        let items = e.items_with_exif();
+        let names: Vec<String> = items.iter().map(|&i| e.item_name(i)).collect();
+        (e.export_defaults(&path), items, names)
+    }) else {
+        return;
+    };
     let formats = Format::WRITABLE;
     let labels: Vec<&str> = formats.iter().map(|f| f.label()).collect();
     let format = dropdown(
@@ -897,17 +949,18 @@ fn export_options(ui: &Rc<Ui>, path: PathBuf) {
     quality.set_sensitive(defaults.format.is_lossy());
     let q = quality.clone();
     format.connect_selected_notify(move |d| {
-        q.set_sensitive(formats[d.selected() as usize].is_lossy());
+        if let Some(f) = formats.get(d.selected() as usize) {
+            q.set_sensitive(f.is_lossy());
+        }
     });
 
-    let items = ui.editor.borrow_mut().items_with_exif();
     let mut names = vec!["None".to_owned()];
-    names.extend(items.iter().map(|&i| ui.editor.borrow().item_name(i)));
+    names.extend(item_names);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let source_index = defaults
         .metadata
         .and_then(|m| items.iter().position(|&i| i == m))
-        .map(|i| i + 1)
+        .map(|i| i.saturating_add(1))
         .unwrap_or(0);
     let source = dropdown(&name_refs, source_index);
     let groups_box = GBox::new(GOrientation::Vertical, 2);
@@ -932,13 +985,20 @@ fn export_options(ui: &Rc<Ui>, path: PathBuf) {
     ]);
     dialog(ui, "Export", &body, "Export", move |ui| {
         let mut settings = defaults.clone();
-        settings.format = formats[format.selected() as usize];
-        if Format::from_path(&settings.path) != Some(settings.format) {
-            settings.path.set_extension(settings.format.extensions()[0]);
+        if let Some(&f) = formats.get(format.selected() as usize) {
+            settings.format = f;
+        }
+        if Format::from_path(&settings.path) != Some(settings.format)
+            && let Some(ext) = settings.format.extensions().first()
+        {
+            settings.path.set_extension(ext);
         }
         // A changed extension is a file the user has not confirmed (EXPORT-003).
         if settings.path != defaults.path {
-            let overwrites = ui.editor.borrow().export_overwrites_source(&settings.path);
+            // keep the dialog open if the editor is busy
+            let Some(overwrites) = ui.read(|e| e.export_overwrites_source(&settings.path)) else {
+                return false;
+            };
             if overwrites || settings.path.exists() {
                 ui.error(&format!(
                     "{} already exists. Export again and choose that name to replace it.",
@@ -950,17 +1010,20 @@ fn export_options(ui: &Rc<Ui>, path: PathBuf) {
         settings.quality = quality.value() as u8;
         settings.metadata = match source.selected() {
             0 => None,
-            n => items.get(n as usize - 1).copied(),
+            n => items.get((n as usize).saturating_sub(1)).copied(),
         };
         settings.groups = checks
             .iter()
             .filter(|(_, c)| c.is_active())
             .map(|(g, _)| *g)
             .collect();
-        let result = ui.editor.borrow_mut().export(&settings);
-        if let Err(e) = result {
-            ui.error(&e);
-            return false;
+        match ui.edit(|e| e.export(&settings)) {
+            Some(Ok(())) => {}
+            Some(Err(e)) => {
+                ui.error(&e);
+                return false;
+            }
+            None => return false,
         }
         true
     });

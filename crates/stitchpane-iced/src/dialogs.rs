@@ -14,6 +14,7 @@ use stitchpane_core::metadata::{ExifEntry, ExifGroup};
 use stitchpane_core::model::{
     Curve, Feather, Filter, ItemId, Orientation, SourceId, TransitionId, TransitionKind,
 };
+use stitchpane_core::panic_free::Clamped;
 use stitchpane_core::project_file;
 
 use crate::{App, Message};
@@ -335,7 +336,10 @@ pub fn run(app: &mut App, command: Command) -> Task<Message> {
             let current = item
                 .or_else(|| app.editor.exif_viewer_item())
                 .filter(|i| items.iter().any(|(id, _)| id == i))
-                .unwrap_or(items[0].0);
+                .or(items.first().map(|(id, _)| *id));
+            let Some(current) = current else {
+                return Task::none();
+            };
             let entries = app.editor.exif_entries(current);
             app.modal = Some(Modal::Exif {
                 items,
@@ -470,7 +474,11 @@ pub fn update(app: &mut App, message: ModalMessage) -> Task<Message> {
 
 fn edit_text(modal: &mut Modal, field: usize, value: String) {
     match modal {
-        Modal::CanvasChoice { size, .. } | Modal::CanvasSize { size, .. } => size[field] = value,
+        Modal::CanvasChoice { size, .. } | Modal::CanvasSize { size, .. } => {
+            if let Some(slot) = size.get_mut(field) {
+                *slot = value;
+            }
+        }
         Modal::SetDpi { dpi, .. } => *dpi = value,
         Modal::Resize {
             size,
@@ -484,9 +492,13 @@ fn edit_text(modal: &mut Modal, field: usize, value: String) {
                 } else {
                     proportional(original.1, original.0, v.max(1))
                 };
-                size[1 - field] = other.to_string();
+                if let Some(slot) = size.get_mut(other_field(field)) {
+                    *slot = other.to_string();
+                }
             }
-            size[field] = value;
+            if let Some(slot) = size.get_mut(field) {
+                *slot = value;
+            }
         }
         Modal::PrintSize {
             size,
@@ -501,9 +513,13 @@ fn edit_text(modal: &mut Modal, field: usize, value: String) {
             }
             if *lock && let Some(v) = num(&value) {
                 let other = if field == 0 { v / *ratio } else { v * *ratio };
-                size[1 - field] = format!("{other:.2}");
+                if let Some(slot) = size.get_mut(other_field(field)) {
+                    *slot = format!("{other:.2}");
+                }
             }
-            size[field] = value;
+            if let Some(slot) = size.get_mut(field) {
+                *slot = value;
+            }
         }
         Modal::Rotate { angle, .. } => *angle = value,
         Modal::Feather { width, .. } => *width = value,
@@ -519,15 +535,26 @@ fn edit_text(modal: &mut Modal, field: usize, value: String) {
     }
 }
 
+/// The other field of a width and height pair.
+fn other_field(field: usize) -> usize {
+    if field == 0 { 1 } else { 0 }
+}
+
 fn edit_check(modal: &mut Modal, field: usize, value: bool) {
     match modal {
         Modal::CanvasChoice { use_dpi, .. }
         | Modal::CanvasSize { use_dpi, .. }
         | Modal::SetDpi { use_dpi, .. } => *use_dpi = value,
         Modal::Resize { lock, .. } | Modal::PrintSize { lock, .. } => *lock = value,
-        Modal::Feather { edges, .. } => edges[field] = value,
+        Modal::Feather { edges, .. } => {
+            if let Some(edge) = edges.get_mut(field) {
+                *edge = value;
+            }
+        }
         Modal::Export { settings, .. } => {
-            let group = ExifGroup::ALL[field];
+            let Some(&group) = ExifGroup::ALL.get(field) else {
+                return;
+            };
             settings.groups.retain(|g| *g != group);
             if value {
                 settings.groups.push(group);
@@ -593,8 +620,10 @@ fn edit_select(app: &mut App, modal: &mut Modal, field: usize, value: String) {
             if field == 0 {
                 if let Some(f) = Format::WRITABLE.into_iter().find(|f| f.label() == value) {
                     settings.format = f;
-                    if Format::from_path(&settings.path) != Some(f) {
-                        settings.path.set_extension(f.extensions()[0]);
+                    if Format::from_path(&settings.path) != Some(f)
+                        && let Some(ext) = f.extensions().first()
+                    {
+                        settings.path.set_extension(ext);
                     }
                 }
             } else {
@@ -728,7 +757,7 @@ fn apply(app: &mut App, current: Modal) -> Task<Message> {
                         return invalid(app, current);
                     };
                     TransitionKind::Crossfade {
-                        ratio: (r / 100.0).clamp(0.0, 1.0),
+                        ratio: (r / 100.0).clamped(0.0, 1.0),
                     }
                 }
             };
@@ -745,8 +774,10 @@ fn apply(app: &mut App, current: Modal) -> Task<Message> {
             let Some(q) = num(quality) else {
                 return invalid(app, current);
             };
-            if Format::from_path(&settings.path) != Some(settings.format) {
-                settings.path.set_extension(settings.format.extensions()[0]);
+            if Format::from_path(&settings.path) != Some(settings.format)
+                && let Some(ext) = settings.format.extensions().first()
+            {
+                settings.path.set_extension(ext);
             }
             // A changed extension is a file the user has not confirmed (EXPORT-003).
             if settings.path != *picked
@@ -758,7 +789,7 @@ fn apply(app: &mut App, current: Modal) -> Task<Message> {
                 )));
                 return Task::none();
             }
-            settings.quality = q.clamp(1.0, 100.0) as u8;
+            settings.quality = q.clamped(1.0, 100.0) as u8;
             if let Err(e) = editor.export(&settings) {
                 app.modal = Some(Modal::Error(e));
             }

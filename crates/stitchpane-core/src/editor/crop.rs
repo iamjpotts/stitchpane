@@ -4,6 +4,7 @@
 use super::Editor;
 use crate::geometry::{PixelRect, Point, Rect};
 use crate::model::{Item, ItemId, Step};
+use crate::panic_free::Clamped;
 
 /// Aspect ratio choices (CROP-003).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -101,10 +102,10 @@ impl CropTool {
     /// The rectangle rounded to whole pixels inside the limits (CROP-002 fields).
     pub fn pixel_rect(&self) -> PixelRect {
         let lim = self.limit_rect();
-        let left = self.rect.x.round().clamp(lim.x, lim.right() - 1.0);
-        let top = self.rect.y.round().clamp(lim.y, lim.bottom() - 1.0);
-        let right = self.rect.right().round().clamp(left + 1.0, lim.right());
-        let bottom = self.rect.bottom().round().clamp(top + 1.0, lim.bottom());
+        let left = self.rect.x.round().clamped(lim.x, lim.right() - 1.0);
+        let top = self.rect.y.round().clamped(lim.y, lim.bottom() - 1.0);
+        let right = self.rect.right().round().clamped(left + 1.0, lim.right());
+        let bottom = self.rect.bottom().round().clamped(top + 1.0, lim.bottom());
         PixelRect::new(
             left as u32,
             top as u32,
@@ -116,17 +117,17 @@ impl CropTool {
     /// Moves the rectangle, keeping it inside the limits.
     pub(super) fn translate(&mut self, dx: f64, dy: f64) {
         let lim = self.limit_rect();
-        self.rect.x = (self.rect.x + dx).clamp(lim.x, lim.right() - self.rect.width);
-        self.rect.y = (self.rect.y + dy).clamp(lim.y, lim.bottom() - self.rect.height);
+        self.rect.x = (self.rect.x + dx).clamped(lim.x, lim.right() - self.rect.width);
+        self.rect.y = (self.rect.y + dy).clamped(lim.y, lim.bottom() - self.rect.height);
     }
 
     /// Sets the rectangle from edges, clamped to the limits and at least 1 pixel.
     pub(super) fn set_edges(&mut self, left: f64, top: f64, right: f64, bottom: f64) {
         let lim = self.limit_rect();
-        let left = left.clamp(lim.x, lim.right() - 1.0);
-        let top = top.clamp(lim.y, lim.bottom() - 1.0);
-        let right = right.clamp(left + 1.0, lim.right());
-        let bottom = bottom.clamp(top + 1.0, lim.bottom());
+        let left = left.clamped(lim.x, lim.right() - 1.0);
+        let top = top.clamped(lim.y, lim.bottom() - 1.0);
+        let right = right.clamped(left + 1.0, lim.right());
+        let bottom = bottom.clamped(top + 1.0, lim.bottom());
         self.rect = Rect::new(left, top, right - left, bottom - top);
     }
 
@@ -143,8 +144,8 @@ impl CropTool {
         let lim = self.limit_rect();
         w = w.min(lim.width);
         h = h.min(lim.height);
-        let x = (c.x - w / 2.0).clamp(lim.x, lim.right() - w);
-        let y = (c.y - h / 2.0).clamp(lim.y, lim.bottom() - h);
+        let x = (c.x - w / 2.0).clamped(lim.x, lim.right() - w);
+        let y = (c.y - h / 2.0).clamped(lim.y, lim.bottom() - h);
         self.rect = Rect::new(x, y, w, h);
     }
 }

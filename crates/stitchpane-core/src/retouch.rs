@@ -5,6 +5,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use image::RgbaImage;
 
 use crate::model::{SmearKind, Stroke};
+use crate::panic_free::{self, Clamped};
 
 /// Applies `stroke` to `image`. `map` converts the stroke's source-pixel coordinates to
 /// pixels of `image`, which has `scale` pixels per source pixel. Pixels outside the image
@@ -81,19 +82,50 @@ fn falloff(d2: f64, radius: f64) -> f32 {
 }
 
 fn read(image: &RgbaImage, x: i64, y: i64) -> Option<[f32; 4]> {
-    let (w, h) = image.dimensions();
-    if x < 0 || y < 0 || x >= i64::from(w) || y >= i64::from(h) {
-        return None;
-    }
-    Some(image.get_pixel(x as u32, y as u32).0.map(f32::from))
+    let (x, y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
+    Some(image.get_pixel_checked(x, y)?.0.map(f32::from))
 }
 
 fn write(image: &mut RgbaImage, x: i64, y: i64, color: [f32; 4]) {
-    image.get_pixel_mut(x as u32, y as u32).0 = color.map(|c| c.clamp(0.0, 255.0).round() as u8);
+    let (Ok(x), Ok(y)) = (u32::try_from(x), u32::try_from(y)) else {
+        return;
+    };
+    if let Some(pixel) = image.get_pixel_mut_checked(x, y) {
+        pixel.0 = color.map(|c| c.clamped(0.0, 255.0).round() as u8);
+    }
 }
 
 fn mix(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
-    [0, 1, 2, 3].map(|i| a[i] + (b[i] - a[i]) * t)
+    let mut out = a;
+    for (o, b) in out.iter_mut().zip(b) {
+        *o += (b - *o) * t;
+    }
+    out
+}
+
+/// The pixel at column `i`, row `j` of a square `side` × `side` area, or transparent
+/// black outside it.
+fn area_at(area: &[[f32; 4]], side: usize, i: usize, j: usize) -> [f32; 4] {
+    if i >= side {
+        return [0.0; 4];
+    }
+    let index = j.saturating_mul(side).saturating_add(i);
+    area.get(index).copied().unwrap_or_default()
+}
+
+/// Copies the `side` × `side` area of `image` whose top left is (`x0`, `y0`), clamping
+/// reads to the image.
+fn copy_area(image: &RgbaImage, x0: i64, y0: i64, side: usize) -> Vec<[f32; 4]> {
+    let (w, h) = (i64::from(image.width()), i64::from(image.height()));
+    let mut area = vec![[0f32; 4]; side.saturating_mul(side)];
+    for (j, row) in panic_free::chunks_mut(&mut area, side).enumerate() {
+        for (i, p) in row.iter_mut().enumerate() {
+            let x = x0.saturating_add(i as i64).min(w.saturating_sub(1)).max(0);
+            let y = y0.saturating_add(j as i64).min(h.saturating_sub(1)).max(0);
+            *p = read(image, x, y).unwrap_or_default();
+        }
+    }
+    area
 }
 
 /// Each brush pixel within the image: (x, y, offset index, weight).
@@ -103,18 +135,23 @@ fn brush_pixels(
     radius: f64,
 ) -> impl Iterator<Item = (i64, i64, usize, f32)> {
     let r = radius.ceil() as i64;
-    let side = 2 * r + 1;
+    let side = r.saturating_mul(2).saturating_add(1);
     let (cx, cy) = (center[0].floor() as i64, center[1].floor() as i64);
     let (w, h) = (i64::from(image.width()), i64::from(image.height()));
-    (-r..=r).flat_map(move |oy| {
-        (-r..=r).filter_map(move |ox| {
-            let (x, y) = (cx + ox, cy + oy);
+    (r.saturating_neg()..=r).flat_map(move |oy| {
+        (r.saturating_neg()..=r).filter_map(move |ox| {
+            let (x, y) = (cx.saturating_add(ox), cy.saturating_add(oy));
             if x < 0 || y < 0 || x >= w || y >= h {
                 return None;
             }
             let (dx, dy) = (x as f64 + 0.5 - center[0], y as f64 + 0.5 - center[1]);
             let weight = falloff(dx * dx + dy * dy, radius);
-            (weight > 0.0).then_some((x, y, ((oy + r) * side + ox + r) as usize, weight))
+            let index = oy
+                .saturating_add(r)
+                .saturating_mul(side)
+                .saturating_add(ox)
+                .saturating_add(r);
+            (weight > 0.0).then_some((x, y, index as usize, weight))
         })
     })
 }
@@ -122,20 +159,20 @@ fn brush_pixels(
 /// Picks up color at the first dab and drags it along, mixing in what it passes over.
 fn smudge(image: &mut RgbaImage, dabs: &[[f64; 2]], radius: f64, strength: f32) {
     let r = radius.ceil() as i64;
-    let side = (2 * r + 1) as usize;
-    let mut carry: Vec<Option<[f32; 4]>> = vec![None; side * side];
+    let side = r.saturating_mul(2).saturating_add(1) as usize;
+    let mut carry: Vec<Option<[f32; 4]>> = vec![None; side.saturating_mul(side)];
     for (index, &dab) in dabs.iter().enumerate() {
         let pixels: Vec<_> = brush_pixels(image, dab, radius).collect();
         for (x, y, i, weight) in pixels {
-            let Some(here) = read(image, x, y) else {
+            let (Some(here), Some(slot)) = (read(image, x, y), carry.get_mut(i)) else {
                 continue;
             };
-            let carried = carry[i].unwrap_or(here);
+            let carried = slot.unwrap_or(here);
             if index > 0 {
                 write(image, x, y, mix(here, carried, weight * strength));
             }
             // Strength is how much of the carried color survives each step.
-            carry[i] = Some(mix(here, carried, strength));
+            *slot = Some(mix(here, carried, strength));
         }
     }
 }
@@ -144,53 +181,42 @@ fn smudge(image: &mut RgbaImage, dabs: &[[f64; 2]], radius: f64, strength: f32) 
 fn blur(image: &mut RgbaImage, dabs: &[[f64; 2]], radius: f64, strength: f32) {
     let k = (radius / 4.0).round().max(1.0) as i64;
     let r = radius.ceil() as i64;
+    let reach = r.saturating_add(k);
     for &dab in dabs {
         let (cx, cy) = (dab[0].floor() as i64, dab[1].floor() as i64);
-        let (x0, y0) = (cx - r - k, cy - r - k);
-        let side = (2 * (r + k) + 1) as usize;
-        // Copy the area, clamping reads to the image.
-        let (w, h) = (i64::from(image.width()), i64::from(image.height()));
-        let mut area = vec![[0f32; 4]; side * side];
-        for j in 0..side {
-            for i in 0..side {
-                let x = (x0 + i as i64).clamp(0, w - 1);
-                let y = (y0 + j as i64).clamp(0, h - 1);
-                area[j * side + i] = read(image, x, y).unwrap_or_default();
-            }
-        }
+        let (x0, y0) = (cx.saturating_sub(reach), cy.saturating_sub(reach));
+        let side = reach.saturating_mul(2).saturating_add(1) as usize;
+        let area = copy_area(image, x0, y0, side);
         let blurred = box_blur(&box_blur(&area, side, k, true), side, k, false);
         let pixels: Vec<_> = brush_pixels(image, dab, radius).collect();
         for (x, y, _, weight) in pixels {
-            let (i, j) = ((x - x0) as usize, (y - y0) as usize);
-            let here = area[j * side + i];
-            write(
-                image,
-                x,
-                y,
-                mix(here, blurred[j * side + i], weight * strength),
-            );
+            let i = x.saturating_sub(x0) as usize;
+            let j = y.saturating_sub(y0) as usize;
+            let here = area_at(&area, side, i, j);
+            let soft = area_at(&blurred, side, i, j);
+            write(image, x, y, mix(here, soft, weight * strength));
         }
     }
 }
 
 fn box_blur(area: &[[f32; 4]], side: usize, k: i64, horizontal: bool) -> Vec<[f32; 4]> {
     let mut out = vec![[0f32; 4]; area.len()];
-    let n = (2 * k + 1) as f32;
-    for j in 0..side {
-        for i in 0..side {
+    let n = 2.0 * k as f32 + 1.0;
+    let last = (side as i64).saturating_sub(1);
+    for (j, row) in panic_free::chunks_mut(&mut out, side).enumerate() {
+        for (i, p) in row.iter_mut().enumerate() {
             let mut sum = [0f32; 4];
-            for d in -k..=k {
+            for d in k.saturating_neg()..=k {
                 let (si, sj) = if horizontal {
-                    ((i as i64 + d).clamp(0, side as i64 - 1) as usize, j)
+                    ((i as i64).saturating_add(d).min(last).max(0) as usize, j)
                 } else {
-                    (i, (j as i64 + d).clamp(0, side as i64 - 1) as usize)
+                    (i, (j as i64).saturating_add(d).min(last).max(0) as usize)
                 };
-                let p = area[sj * side + si];
-                for c in 0..4 {
-                    sum[c] += p[c];
+                for (s, v) in sum.iter_mut().zip(area_at(area, side, si, sj)) {
+                    *s += v;
                 }
             }
-            out[j * side + i] = sum.map(|v| v / n);
+            *p = sum.map(|v| v / n);
         }
     }
     out
@@ -198,22 +224,16 @@ fn box_blur(area: &[[f32; 4]], side: usize, k: i64, horizontal: bool) -> Vec<[f3
 
 /// Moves pixels under the brush along the stroke.
 fn push(image: &mut RgbaImage, dabs: &[[f64; 2]], radius: f64, strength: f32) {
-    let (w, h) = (i64::from(image.width()), i64::from(image.height()));
-    for pair in dabs.windows(2) {
-        let (from, to) = (pair[0], pair[1]);
+    for (&from, &to) in dabs.iter().zip(dabs.iter().skip(1)) {
         let v = [to[0] - from[0], to[1] - from[1]];
         // Copy the area the brush reads from, clamping reads to the image.
-        let reach = radius.ceil() as i64 + v[0].abs().max(v[1].abs()).ceil() as i64 + 2;
-        let (x0, y0) = (to[0].floor() as i64 - reach, to[1].floor() as i64 - reach);
-        let side = (2 * reach + 1) as usize;
-        let mut area = vec![[0f32; 4]; side * side];
-        for j in 0..side {
-            for i in 0..side {
-                let x = (x0 + i as i64).clamp(0, w - 1);
-                let y = (y0 + j as i64).clamp(0, h - 1);
-                area[j * side + i] = read(image, x, y).unwrap_or_default();
-            }
-        }
+        let reach = (radius.ceil() as i64)
+            .saturating_add(v[0].abs().max(v[1].abs()).ceil() as i64)
+            .saturating_add(2);
+        let x0 = (to[0].floor() as i64).saturating_sub(reach);
+        let y0 = (to[1].floor() as i64).saturating_sub(reach);
+        let side = reach.saturating_mul(2).saturating_add(1) as usize;
+        let area = copy_area(image, x0, y0, side);
         let pixels: Vec<_> = brush_pixels(image, to, radius).collect();
         for (x, y, _, weight) in pixels {
             let t = f64::from(weight * strength);
@@ -229,14 +249,27 @@ fn bilinear(area: &[[f32; 4]], side: usize, x: f64, y: f64) -> [f32; 4] {
     let (gx, gy) = (x - 0.5, y - 0.5);
     let (x0, y0) = (gx.floor() as i64, gy.floor() as i64);
     let (tx, ty) = ((gx - gx.floor()) as f32, (gy - gy.floor()) as f32);
-    let last = side as i64 - 1;
-    let at = |x: i64, y: i64| area[y.clamp(0, last) as usize * side + x.clamp(0, last) as usize];
-    let top = mix(at(x0, y0), at(x0 + 1, y0), tx);
-    let bottom = mix(at(x0, y0 + 1), at(x0 + 1, y0 + 1), tx);
+    let last = (side as i64).saturating_sub(1);
+    let at = |x: i64, y: i64| {
+        area_at(
+            area,
+            side,
+            x.min(last).max(0) as usize,
+            y.min(last).max(0) as usize,
+        )
+    };
+    let (x1, y1) = (x0.saturating_add(1), y0.saturating_add(1));
+    let top = mix(at(x0, y0), at(x1, y0), tx);
+    let bottom = mix(at(x0, y1), at(x1, y1), tx);
     mix(top, bottom, ty)
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "tests may panic (RUST-001)"
+)]
 mod tests {
     use super::*;
 

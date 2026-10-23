@@ -326,7 +326,9 @@ impl Ui {
         // Callbacks hold weak references; the window owns the UI until it is destroyed.
         let keep = RefCell::new(Some(ui.clone()));
         window.connect_destroy(move |_| {
-            keep.borrow_mut().take();
+            if let Ok(mut keep) = keep.try_borrow_mut() {
+                keep.take();
+            }
         });
 
         ui.install_actions();
@@ -350,8 +352,9 @@ impl Ui {
         redo.connect_clicked(on(Command::Redo));
         let weak = Rc::downgrade(&ui);
         exif.connect_clicked(move |_| {
-            if let Some(ui) = weak.upgrade() {
-                let item = ui.editor.borrow_mut().exif_viewer_item();
+            if let Some(ui) = weak.upgrade()
+                && let Some(item) = ui.edit(|e| e.exif_viewer_item())
+            {
                 ui.command(Command::ExifViewer(item));
             }
         });
@@ -359,11 +362,8 @@ impl Ui {
         locate.connect_clicked(move |_| {
             if let Some(ui) = weak.upgrade() {
                 let first = ui
-                    .editor
-                    .borrow_mut()
-                    .missing_sources()
-                    .first()
-                    .map(|m| m.0);
+                    .edit(|e| e.missing_sources().first().map(|m| m.0))
+                    .flatten();
                 if let Some(source) = first {
                     ui.command(Command::LocateSource(source));
                 }
@@ -376,13 +376,14 @@ impl Ui {
             let Some(ui) = weak.upgrade() else {
                 return glib::Propagation::Proceed;
             };
-            if !ui.editor.borrow().needs_save_prompt() {
+            // if the editor is busy, ask rather than risk losing work
+            if !ui.read(|e| e.needs_save_prompt()).unwrap_or(true) {
                 return glib::Propagation::Proceed;
             }
             let window = window.clone();
             glib::spawn_future_local(async move {
                 if dialogs::confirm_discard(&ui).await {
-                    ui.editor.replace(Editor::new());
+                    ui.edit(|e| *e = Editor::new());
                     window.destroy();
                 }
             });
@@ -391,12 +392,12 @@ impl Ui {
 
         window.present();
         if !paths.is_empty() {
-            let result = if paths.len() == 1 {
-                ui.editor.borrow_mut().open(&paths[0])
+            let result = if let [path] = paths.as_slice() {
+                ui.edit(|e| e.open(path))
             } else {
-                ui.editor.borrow_mut().open_images(&paths)
+                ui.edit(|e| e.open_images(&paths))
             };
-            if let Err(e) = result {
+            if let Some(Err(e)) = result {
                 ui.error(&e);
             }
         }
@@ -429,7 +430,10 @@ impl Ui {
                 if let Some(ui) = weak.upgrade() {
                     let command = match &command {
                         Command::ExifViewer(None) => {
-                            Command::ExifViewer(ui.editor.borrow_mut().exif_viewer_item())
+                            let Some(item) = ui.edit(|e| e.exif_viewer_item()) else {
+                                return;
+                            };
+                            Command::ExifViewer(item)
                         }
                         other => other.clone(),
                     };
@@ -443,7 +447,9 @@ impl Ui {
         snapping.connect_activate(move |action, _| {
             if let Some(ui) = weak.upgrade() {
                 ui.command(Command::ToggleSnapping);
-                action.set_state(&ui.editor.borrow().snapping().to_variant());
+                if let Some(snapping) = ui.read(|e| e.snapping()) {
+                    action.set_state(&snapping.to_variant());
+                }
             }
         });
         self.window.add_action(&snapping);
@@ -451,7 +457,9 @@ impl Ui {
 
     /// The main menu, rebuilt on refresh so undo and redo show their step (UNDO-003).
     fn menu_model(&self) -> gio::Menu {
-        let editor = self.editor.borrow();
+        let (undo, redo) = self
+            .read(|e| (e.undo_label(), e.redo_label()))
+            .unwrap_or_default();
         let item = |label: &str, action: &str, accel: Option<&str>| {
             let item = gio::MenuItem::new(Some(label), Some(action));
             if let Some(accel) = accel {
@@ -469,12 +477,12 @@ impl Ui {
         menu.append_section(None, &file);
         let edit = gio::Menu::new();
         edit.append_item(&item(
-            &editor.undo_label().unwrap_or_else(|| "Undo".to_owned()),
+            &undo.unwrap_or_else(|| "Undo".to_owned()),
             "win.undo",
             Some("<Control>z"),
         ));
         edit.append_item(&item(
-            &editor.redo_label().unwrap_or_else(|| "Redo".to_owned()),
+            &redo.unwrap_or_else(|| "Redo".to_owned()),
             "win.redo",
             Some("<Shift><Control>z"),
         ));
@@ -498,9 +506,7 @@ impl Ui {
         let weak = Rc::downgrade(self);
         self.canvas.connect_resize(move |_, w, h| {
             if let Some(ui) = weak.upgrade() {
-                ui.editor
-                    .borrow_mut()
-                    .set_viewport(f64::from(w), f64::from(h));
+                ui.edit(|e| e.set_viewport(f64::from(w), f64::from(h)));
                 ui.refresh();
             }
         });
@@ -520,9 +526,7 @@ impl Ui {
             let p = Point::new(x, y);
             ui.drag_start.set(p);
             let mods = modifiers(gesture.current_event_state());
-            ui.editor
-                .borrow_mut()
-                .pointer_down(p, PointerButton::Primary, mods);
+            ui.edit(|e| e.pointer_down(p, PointerButton::Primary, mods));
             ui.refresh();
         });
         let weak = Rc::downgrade(self);
@@ -530,9 +534,7 @@ impl Ui {
             let Some(ui) = weak.upgrade() else { return };
             let s = ui.drag_start.get();
             let mods = modifiers(gesture.current_event_state());
-            ui.editor
-                .borrow_mut()
-                .pointer_move(Point::new(s.x + dx, s.y + dy), mods);
+            ui.edit(|e| e.pointer_move(Point::new(s.x + dx, s.y + dy), mods));
             ui.update_cursor();
             ui.canvas.queue_draw();
             ui.refresh_crop_bar();
@@ -542,9 +544,7 @@ impl Ui {
             let Some(ui) = weak.upgrade() else { return };
             let s = ui.drag_start.get();
             let mods = modifiers(gesture.current_event_state());
-            ui.editor
-                .borrow_mut()
-                .pointer_up(Point::new(s.x + dx, s.y + dy), mods);
+            ui.edit(|e| e.pointer_up(Point::new(s.x + dx, s.y + dy), mods));
             ui.refresh();
         });
         self.canvas.add_controller(drag);
@@ -556,11 +556,9 @@ impl Ui {
         click.connect_pressed(move |gesture, _, x, y| {
             let Some(ui) = weak.upgrade() else { return };
             let mods = modifiers(gesture.current_event_state());
-            let menu = ui.editor.borrow_mut().pointer_down(
-                Point::new(x, y),
-                PointerButton::Secondary,
-                mods,
-            );
+            let menu = ui
+                .edit(|e| e.pointer_down(Point::new(x, y), PointerButton::Secondary, mods))
+                .flatten();
             ui.refresh();
             if let Some(menu) = menu {
                 dialogs::context_menu(&ui, menu, x, y);
@@ -575,7 +573,10 @@ impl Ui {
                 ui.pointer.set(Point::new(x, y));
                 ui.update_cursor();
                 // SMEAR-001: the brush outline follows the pointer.
-                if ui.editor.borrow_mut().pointer_hover(Point::new(x, y)) {
+                if ui
+                    .edit(|e| e.pointer_hover(Point::new(x, y)))
+                    .unwrap_or(false)
+                {
                     ui.canvas.queue_draw();
                 }
             }
@@ -590,7 +591,7 @@ impl Ui {
             };
             let mods = modifiers(controller.current_event_state());
             let p = ui.pointer.get();
-            ui.editor.borrow_mut().scroll(p, dx, dy, mods);
+            ui.edit(|e| e.scroll(p, dx, dy, mods));
             ui.refresh();
             glib::Propagation::Stop
         });
@@ -607,11 +608,8 @@ impl Ui {
                 return false;
             };
             let paths: Vec<PathBuf> = files.files().iter().filter_map(|f| f.path()).collect();
-            let result = ui
-                .editor
-                .borrow_mut()
-                .add_images(&paths, Some(Point::new(x, y)));
-            if let Err(e) = result {
+            let result = ui.edit(|e| e.add_images(&paths, Some(Point::new(x, y))));
+            if let Some(Err(e)) = result {
                 ui.error(&e);
             }
             ui.refresh();
@@ -628,7 +626,9 @@ impl Ui {
             let Some(key) = map_key(key) else {
                 return glib::Propagation::Proceed;
             };
-            let outcome = ui.editor.borrow_mut().key_press(key, modifiers(state));
+            let Some(outcome) = ui.edit(|e| e.key_press(key, modifiers(state))) else {
+                return glib::Propagation::Proceed;
+            };
             match outcome {
                 KeyOutcome::Unhandled => glib::Propagation::Proceed,
                 KeyOutcome::Handled => {
@@ -651,15 +651,14 @@ impl Ui {
             if ui.updating.get() {
                 return;
             }
-            {
-                let s = &ui.smear;
-                let mut editor = ui.editor.borrow_mut();
+            let s = &ui.smear;
+            ui.edit(|editor| {
                 if let Some(kind) = SmearKind::ALL.get(s.kind.selected() as usize) {
                     editor.set_smear_kind(*kind);
                 }
                 editor.set_smear_size(s.size.value());
                 editor.set_smear_strength(s.strength.value() / 100.0);
-            }
+            });
             ui.canvas.queue_draw();
         };
         let f = apply.clone();
@@ -676,7 +675,9 @@ impl Ui {
     }
 
     fn refresh_smear_bar(&self) {
-        let tool = self.editor.borrow().smear_tool();
+        let Some(tool) = self.read(|e| e.smear_tool()) else {
+            return;
+        };
         self.smear.container.set_visible(tool.is_some());
         let Some(tool) = tool else { return };
         self.updating.set(true);
@@ -709,7 +710,7 @@ impl Ui {
                     c.width.value().max(1.0) as u32,
                     c.height.value().max(1.0) as u32,
                 );
-                ui.editor.borrow_mut().set_crop_rect(rect);
+                ui.edit(|e| e.set_crop_rect(rect));
                 ui.refresh();
             });
         }
@@ -727,7 +728,7 @@ impl Ui {
                 .unwrap_or_else(|| {
                     AspectChoice::Custom(c.custom_w.value() as u32, c.custom_h.value() as u32)
                 });
-            ui.editor.borrow_mut().set_crop_aspect(aspect);
+            ui.edit(|e| e.set_crop_aspect(aspect));
             ui.refresh();
         };
         let f = set_aspect.clone();
@@ -752,13 +753,14 @@ impl Ui {
     }
 
     fn draw(self: &Rc<Self>, cr: &cairo::Context, w: i32, h: i32) {
-        let (frame, labels, busy) = {
-            let mut editor = self.editor.borrow_mut();
+        let Some((frame, labels, busy)) = self.edit(|editor| {
             if editor.view().viewport != (f64::from(w), f64::from(h)) {
                 editor.set_viewport(f64::from(w), f64::from(h));
             }
             editor.poll_background();
             (editor.frame(), editor.labels(), editor.background_busy())
+        }) else {
+            return;
         };
         if busy {
             self.poll_background();
@@ -769,7 +771,7 @@ impl Ui {
             let [r, g, b, a] = p.0;
             data.extend_from_slice(&[b, g, r, a]);
         }
-        let stride = fw as i32 * 4;
+        let stride = (fw as i32).saturating_mul(4);
         if let Ok(surface) = cairo::ImageSurface::create_for_data(
             data,
             cairo::Format::ARgb32,
@@ -811,9 +813,11 @@ impl Ui {
             let Some(ui) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
-            let (arrived, busy) = {
-                let mut editor = ui.editor.borrow_mut();
-                (editor.poll_background(), editor.background_busy())
+            let Some((arrived, busy)) =
+                ui.edit(|editor| (editor.poll_background(), editor.background_busy()))
+            else {
+                // try again on the next tick
+                return glib::ControlFlow::Continue;
             };
             if arrived {
                 ui.canvas.queue_draw();
@@ -828,8 +832,27 @@ impl Ui {
     }
 
     fn update_cursor(&self) {
-        let cursor = self.editor.borrow().cursor_at(self.pointer.get());
+        let Some(cursor) = self.read(|e| e.cursor_at(self.pointer.get())) else {
+            return;
+        };
         self.canvas.set_cursor_from_name(Some(cursor_name(cursor)));
+    }
+
+    /// Runs `f` on the editor. Returns `None`, doing nothing, if the editor is already
+    /// borrowed, which only happens when a GTK signal re-enters a handler (RUST-001).
+    pub(crate) fn edit<R>(&self, f: impl FnOnce(&mut Editor) -> R) -> Option<R> {
+        match self.editor.try_borrow_mut() {
+            Ok(mut editor) => Some(f(&mut editor)),
+            Err(_) => None,
+        }
+    }
+
+    /// Like [`Ui::edit`], for reading.
+    pub(crate) fn read<R>(&self, f: impl FnOnce(&Editor) -> R) -> Option<R> {
+        match self.editor.try_borrow() {
+            Ok(editor) => Some(f(&editor)),
+            Err(_) => None,
+        }
     }
 
     /// Runs a command, opening a dialog for those that need one.
@@ -837,7 +860,7 @@ impl Ui {
         if command.needs_ui() {
             dialogs::run(self, command);
         } else {
-            self.editor.borrow_mut().execute(command);
+            self.edit(|e| e.execute(command));
             self.refresh();
         }
     }
@@ -852,19 +875,22 @@ impl Ui {
     }
 
     fn refresh_crop_bar(&self) {
-        let editor = self.editor.borrow();
-        let crop = editor.crop_tool().copied();
+        let Some(crop) = self.read(|e| e.crop_tool().copied()) else {
+            return;
+        };
         self.crop.container.set_visible(crop.is_some());
         let Some(crop) = crop else { return };
         self.updating.set(true);
         let r = crop.pixel_rect();
         let lim = crop.limits;
-        self.crop
-            .left
-            .set_range(f64::from(lim.left), f64::from(lim.right() - 1));
-        self.crop
-            .top
-            .set_range(f64::from(lim.top), f64::from(lim.bottom() - 1));
+        self.crop.left.set_range(
+            f64::from(lim.left),
+            f64::from(lim.right().saturating_sub(1)),
+        );
+        self.crop.top.set_range(
+            f64::from(lim.top),
+            f64::from(lim.bottom().saturating_sub(1)),
+        );
         self.crop.width.set_range(1.0, f64::from(lim.width));
         self.crop.height.set_range(1.0, f64::from(lim.height));
         self.crop.left.set_value(f64::from(r.left));
@@ -884,12 +910,11 @@ impl Ui {
 
     /// Brings every widget up to date with the editor.
     pub(crate) fn refresh(&self) {
-        let message = self.editor.borrow_mut().take_message();
+        let message = self.edit(|e| e.take_message()).flatten();
         if let Some(message) = message {
             self.error(&message);
         }
-        {
-            let mut editor = self.editor.borrow_mut();
+        self.edit(|editor| {
             self.window.set_title(Some(&editor.title()));
             self.save.set_sensitive(!editor.is_empty());
             self.undo.set_sensitive(editor.can_undo());
@@ -924,29 +949,38 @@ impl Ui {
                 self.missing_label.set_text(&text);
             }
             self.hint.set_visible(editor.is_empty());
-        }
+        });
         self.refresh_crop_bar();
         self.refresh_smear_bar();
         let model = self.menu_model();
         self.menu
             .set_popover(Some(&PopoverMenu::from_model(Some(&model))));
-        if let Some(action) = self.window.lookup_action("undo") {
-            action
-                .downcast::<gio::SimpleAction>()
-                .expect("simple action")
-                .set_enabled(self.editor.borrow().can_undo());
+        if let Some(Ok(action)) = self
+            .window
+            .lookup_action("undo")
+            .map(|a| a.downcast::<gio::SimpleAction>())
+            && let Some(enabled) = self.read(|e| e.can_undo())
+        {
+            action.set_enabled(enabled);
         }
-        if let Some(action) = self.window.lookup_action("redo") {
-            action
-                .downcast::<gio::SimpleAction>()
-                .expect("simple action")
-                .set_enabled(self.editor.borrow().can_redo());
+        if let Some(Ok(action)) = self
+            .window
+            .lookup_action("redo")
+            .map(|a| a.downcast::<gio::SimpleAction>())
+            && let Some(enabled) = self.read(|e| e.can_redo())
+        {
+            action.set_enabled(enabled);
         }
         self.canvas.queue_draw();
     }
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "tests may panic (RUST-001)"
+)]
 mod tests {
     //! GTK wiring tests. They need a display and are skipped without one. All GTK calls
     //! stay on this one test's thread.

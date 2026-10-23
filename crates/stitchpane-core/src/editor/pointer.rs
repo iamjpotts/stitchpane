@@ -7,6 +7,7 @@ use crate::geometry::{Point, Rect};
 use crate::model::{
     CanvasSize, Item, ItemId, Orientation, SeamGeometry, Step, TransitionId, TransitionKind,
 };
+use crate::panic_free::Clamped;
 
 /// Half the size of a square handle, in screen pixels.
 pub(super) const HANDLE_RADIUS: f64 = 5.0;
@@ -261,7 +262,7 @@ fn distance_to_segment(p: Point, a: Point, b: Point) -> f64 {
     let t = if len2 == 0.0 {
         0.0
     } else {
-        (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).clamp(0.0, 1.0)
+        (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).clamped(0.0, 1.0)
     };
     p.distance(Point::new(a.x + t * dx, a.y + t * dy))
 }
@@ -591,7 +592,10 @@ impl Editor {
                         });
                     }
                 }
-                let (x, y) = (item.x + dx.round() as i32, item.y + dy.round() as i32);
+                let (x, y) = (
+                    item.x.saturating_add(dx.round() as i32),
+                    item.y.saturating_add(dy.round() as i32),
+                );
                 ((x, y) != (item.x, item.y)).then_some(Step::MoveItem {
                     item: item.id,
                     x,
@@ -674,7 +678,7 @@ impl Editor {
                 let mut feather = item
                     .feather
                     .unwrap_or_else(|| self.default_feather(item.id));
-                feather.width = inward.round().clamp(1.0, max.max(1.0));
+                feather.width = inward.round().clamped(1.0, max.max(1.0));
                 (Some(feather) != item.feather).then_some(Step::SetFeather {
                     item: item.id,
                     feather: Some(feather),
@@ -1112,5 +1116,5 @@ impl Editor {
 
 /// Zoom factor for a scroll amount (negative scrolls zoom in).
 fn view_zoom_factor(dy: f64) -> f64 {
-    super::view::ZOOM_STEP.powf(-dy.clamp(-4.0, 4.0))
+    super::view::ZOOM_STEP.powf(-dy.clamped(-4.0, 4.0))
 }

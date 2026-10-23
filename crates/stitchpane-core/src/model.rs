@@ -1,13 +1,29 @@
 //! Project state and the steps that change it. A project's state is the result of applying
 //! its steps, in order, to an initial canvas.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 use crate::geometry::{PixelRect, Point, Rect, rotated_bounds};
+use crate::panic_free;
+use crate::panic_free::Clamped;
+
+/// One more than the largest id in `used`, or the lowest free id once that would
+/// overflow.
+pub(crate) fn next_id(used: impl Iterator<Item = u32> + Clone) -> u32 {
+    match used.clone().max().unwrap_or(0).checked_add(1) {
+        Some(id) => id,
+        None => {
+            let used: BTreeSet<u32> = used.collect();
+            (1..=u32::MAX)
+                .find(|id| !used.contains(id))
+                .unwrap_or(u32::MAX)
+        }
+    }
+}
 
 macro_rules! id_type {
     ($name:ident, $prefix:literal) => {
@@ -65,7 +81,7 @@ impl Curve {
 
     /// Maps `t` in `0..=1` (clamped) to an opacity in `0..=1`.
     pub fn apply(self, t: f64) -> f64 {
-        let t = t.clamp(0.0, 1.0);
+        let t = t.clamped(0.0, 1.0);
         match self {
             Curve::Linear => t,
             Curve::Smooth => t * t * (3.0 - 2.0 * t),
@@ -254,7 +270,7 @@ impl Item {
     /// differ by an odd number of pixels stay pixel-aligned (PLACE-007).
     pub fn shift(&self) -> Point {
         match self.quarter_turns() {
-            Some(1 | 3) if (self.width + self.height) % 2 == 1 => Point::new(0.5, 0.5),
+            Some(1 | 3) if (self.width ^ self.height) & 1 == 1 => Point::new(0.5, 0.5),
             _ => Point::default(),
         }
     }
@@ -538,11 +554,11 @@ impl ProjectState {
     }
 
     pub fn next_item_id(&self) -> ItemId {
-        ItemId(self.items.iter().map(|i| i.id.0).max().unwrap_or(0) + 1)
+        ItemId(next_id(self.items.iter().map(|i| i.id.0)))
     }
 
     pub fn next_transition_id(&self) -> TransitionId {
-        TransitionId(self.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1)
+        TransitionId(next_id(self.transitions.iter().map(|t| t.id.0)))
     }
 
     /// The canvas area, in canvas coordinates.
@@ -753,9 +769,12 @@ impl ProjectState {
             }
             Step::SetZOrder { item, index } => {
                 let from = self.item_index(item).ok_or(StepError::UnknownItem(item))?;
-                let moved = self.items.remove(from);
+                let moved = panic_free::remove_at(&mut self.items, from)
+                    .ok_or(StepError::UnknownItem(item))?;
                 let index = index.min(self.items.len());
-                self.items.insert(index, moved);
+                if let Err(moved) = panic_free::insert_at(&mut self.items, index, moved) {
+                    self.items.push(moved);
+                }
             }
             Step::RotateItem { item, degrees } => {
                 if !degrees.is_finite() {
@@ -779,8 +798,8 @@ impl ProjectState {
                 self.canvas.dpi = dpi;
                 self.canvas.size = CanvasSize::Fixed { width, height };
                 for item in &mut self.items {
-                    item.x += offset_x;
-                    item.y += offset_y;
+                    item.x = item.x.saturating_add(offset_x);
+                    item.y = item.y.saturating_add(offset_y);
                 }
             }
             Step::SetDpi { dpi } => {
@@ -835,7 +854,8 @@ impl ProjectState {
                     .iter()
                     .position(|t| t.id == id)
                     .ok_or(StepError::UnknownTransition(id))?;
-                self.transitions.remove(index);
+                panic_free::remove_at(&mut self.transitions, index)
+                    .ok_or(StepError::UnknownTransition(id))?;
             }
             Step::SetFeather { item, feather } => {
                 if let Some(f) = feather
@@ -857,7 +877,8 @@ impl ProjectState {
             }
             Step::RemoveItem { item } => {
                 let index = self.item_index(item).ok_or(StepError::UnknownItem(item))?;
-                self.items.remove(index);
+                panic_free::remove_at(&mut self.items, index)
+                    .ok_or(StepError::UnknownItem(item))?;
                 self.transitions.retain(|t| !t.items.contains(&item));
                 self.strokes.remove(&item);
             }

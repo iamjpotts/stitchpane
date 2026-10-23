@@ -1,6 +1,7 @@
 //! Mapping between canvas coordinates and the screen (UI-003).
 
 use crate::geometry::{Point, Rect};
+use crate::panic_free::Clamped;
 
 pub const MIN_ZOOM: f64 = 0.02;
 pub const MAX_ZOOM: f64 = 32.0;
@@ -63,7 +64,7 @@ impl View {
         } else {
             let zoom = ((vw - 2.0 * FIT_MARGIN) / canvas.width)
                 .min((vh - 2.0 * FIT_MARGIN) / canvas.height)
-                .clamp(MIN_ZOOM, MAX_ZOOM);
+                .clamped(MIN_ZOOM, MAX_ZOOM);
             self.zoom = zoom;
             self.center_on(canvas);
         }
@@ -81,7 +82,7 @@ impl View {
     /// Sets the zoom, keeping the canvas point under `about` (screen) in place.
     pub fn set_zoom(&mut self, zoom: f64, about: Point) {
         let anchor = self.to_canvas(about);
-        self.zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+        self.zoom = zoom.clamped(MIN_ZOOM, MAX_ZOOM);
         self.pan = Point::new(
             anchor.x - about.x / self.zoom,
             anchor.y - about.y / self.zoom,

@@ -27,8 +27,12 @@ ADR in `decisions/`.
 9. **Dependencies pass `cargo deny`.** Every exception in `deny.toml` carries a one-line
    comment explaining it.
 10. **No GPL-3.0 or AGPL-3.0 crates**, in any variant.
+11. **Panic safety.** The implementation must handle all failure paths, even if very
+    rare or thought to be unreachable. This applies to production code; test code may
+    panic on purpose to simplify its assertions. The exceptions are listed in
+    `engineering/rust.md` (RUST-001); see also `decisions/0006-panic-safety.md`.
 
 ## Licensing
 
-11. Stitch Pane is currently unlicensed (private, personal use). Dependency license
+12. Stitch Pane is currently unlicensed (private, personal use). Dependency license
     obligations will be reviewed when a license is chosen.

@@ -97,12 +97,16 @@ impl CanvasChoice {
                     .iter()
                     .map(|&(w, h)| {
                         let p = (x, center(max_h, h));
-                        x += w as i32;
+                        x = x.saturating_add_unsigned(w);
                         p
                     })
                     .collect();
                 (
-                    fixed(sizes.iter().map(|s| s.0).sum(), max_h, None),
+                    fixed(
+                        sizes.iter().fold(0, |sum, s| sum.saturating_add(s.0)),
+                        max_h,
+                        None,
+                    ),
                     positions,
                 )
             }
@@ -112,19 +116,23 @@ impl CanvasChoice {
                     .iter()
                     .map(|&(w, h)| {
                         let p = (center(max_w, w), y);
-                        y += h as i32;
+                        y = y.saturating_add_unsigned(h);
                         p
                     })
                     .collect();
                 (
-                    fixed(max_w, sizes.iter().map(|s| s.1).sum(), None),
+                    fixed(
+                        max_w,
+                        sizes.iter().fold(0, |sum, s| sum.saturating_add(s.1)),
+                        None,
+                    ),
                     positions,
                 )
             }
             CanvasChoice::Largest => {
                 let &(w, h) = sizes
                     .iter()
-                    .max_by_key(|(w, h)| u64::from(*w) * u64::from(*h))
+                    .max_by_key(|(w, h)| u64::from(*w).saturating_mul(u64::from(*h)))
                     .unwrap_or(&(1, 1));
                 (fixed(w, h, None), centered(w, h))
             }
@@ -140,7 +148,7 @@ impl CanvasChoice {
 }
 
 fn center(outer: u32, inner: u32) -> i32 {
-    ((i64::from(outer) - i64::from(inner)) / 2) as i32
+    (i64::from(outer).saturating_sub(i64::from(inner)) / 2) as i32
 }
 
 /// Units for print sizes (RES-004).
@@ -275,6 +283,11 @@ impl Editor {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "tests may panic (RUST-001)"
+)]
 mod tests {
     use super::*;
 

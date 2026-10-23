@@ -11,6 +11,24 @@ version = "0.1.0"
 [workspace.lints.rust]
 warnings = "deny"
 
+# panic lints (RUST-001, decisions/0006-panic-safety.md); never remove, lower, or allow
+# them in production code. Test crate roots allow them (see tests/features.rs).
+[workspace.lints.clippy]
+arithmetic_side_effects = "deny"
+exit = "deny"
+expect_used = "deny"
+get_unwrap = "deny"
+indexing_slicing = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+string_slice = "deny"
+todo = "deny"
+unchecked_time_subtraction = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+unwrap_in_result = "deny"
+unwrap_used = "deny"
+
 [workspace.dependencies]
 cucumber = "0.23"
 futures = "0.3"

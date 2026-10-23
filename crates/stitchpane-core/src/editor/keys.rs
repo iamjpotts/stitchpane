@@ -97,7 +97,10 @@ impl Editor {
             Key::Char('c') => {
                 let target = self.selection.item().or_else(|| {
                     let items = &self.project.state().items;
-                    (items.len() == 1).then(|| items[0].id)
+                    match items.as_slice() {
+                        [only] => Some(only.id),
+                        _ => None,
+                    }
                 });
                 match target {
                     Some(item) => self.run(Command::Crop(item)),
@@ -134,11 +137,11 @@ impl Editor {
 
     /// Arrow keys: move, or with Ctrl resize, whatever is selected (UI-006).
     fn arrow(&mut self, key: super::Key, mods: Modifiers) -> KeyOutcome {
-        let amount = if mods.shift { 10 } else { 1 };
+        let amount: i32 = if mods.shift { 10 } else { 1 };
         let (dx, dy) = match key {
-            Key::Left => (-amount, 0),
+            Key::Left => (amount.saturating_neg(), 0),
             Key::Right => (amount, 0),
-            Key::Up => (0, -amount),
+            Key::Up => (0, amount.saturating_neg()),
             _ => (0, amount),
         };
         if let Some(crop) = &mut self.crop {
@@ -159,8 +162,8 @@ impl Editor {
                         item,
                         x: i.x,
                         y: i.y,
-                        width: (i64::from(i.width) + i64::from(dx)).max(1) as u32,
-                        height: (i64::from(i.height) + i64::from(dy)).max(1) as u32,
+                        width: grow(i.width, dx),
+                        height: grow(i.height, dy),
                         filter: i.filter,
                     })
                 });
@@ -170,8 +173,8 @@ impl Editor {
                     let i = state.item(item)?;
                     Some(Step::MoveItem {
                         item,
-                        x: i.x + dx,
-                        y: i.y + dy,
+                        x: i.x.saturating_add(dx),
+                        y: i.y.saturating_add(dy),
                     })
                 });
             }
@@ -207,9 +210,9 @@ impl Editor {
                     let mut feather = state.item(item)?.feather?;
                     let delta = match edge {
                         Edge::Left => dx,
-                        Edge::Right => -dx,
+                        Edge::Right => dx.saturating_neg(),
                         Edge::Top => dy,
-                        Edge::Bottom => -dy,
+                        Edge::Bottom => dy.saturating_neg(),
                     };
                     feather.width = (feather.width + f64::from(delta)).max(1.0);
                     Some(Step::SetFeather {
@@ -235,4 +238,9 @@ impl Editor {
             self.pending = Some((target, step));
         }
     }
+}
+
+/// `size` grown by `delta` pixels, at least 1.
+fn grow(size: u32, delta: i32) -> u32 {
+    size.saturating_add_signed(delta).max(1)
 }

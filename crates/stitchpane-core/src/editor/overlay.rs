@@ -12,6 +12,7 @@ use super::view::View;
 use super::{Edge, Editor, Selection};
 use crate::geometry::Point;
 use crate::model::{ItemId, ProjectState, Stroke, TransitionKind};
+use crate::panic_free::{self, Clamped};
 
 const BACKGROUND: [u8; 4] = [0x5e, 0x5c, 0x64, 0xff];
 const CHECK_LIGHT: [u8; 4] = [0xff, 0xff, 0xff, 0xff];
@@ -77,17 +78,22 @@ impl Editor {
             Some((cached, image)) if *cached == key => image.clone(),
             _ => {
                 let [cx0, cy0, cx1, cy1] = bounds;
-                let image = RgbaImage::from_fn(width, height, |x, y| {
+                let image = panic_free::image_from_fn(width, height, |x, y| {
                     let (sx, sy) = (i64::from(x), i64::from(y));
                     let inside = sx >= cx0 && sx < cx1 && sy >= cy0 && sy < cy1;
                     Rgba(if !inside {
                         BACKGROUND
-                    } else if ((sx - cx0) / CHECK_SIZE + (sy - cy0) / CHECK_SIZE) % 2 == 0 {
+                    } else if (sx.saturating_sub(cx0) / CHECK_SIZE)
+                        .saturating_add(sy.saturating_sub(cy0) / CHECK_SIZE)
+                        % 2
+                        == 0
+                    {
                         CHECK_LIGHT
                     } else {
                         CHECK_DARK
                     })
-                });
+                })
+                .unwrap_or_default();
                 self.background = Some((key, image.clone()));
                 image
             }
@@ -222,8 +228,10 @@ impl Editor {
             for y in y0..y1 {
                 for x in x0..x1 {
                     let p = view.to_canvas(Point::new(f64::from(x) + 0.5, f64::from(y) + 0.5));
-                    if item.contains(p) && !crop.rect.contains(mapping.canvas_to_source(p)) {
-                        let px = image.get_pixel_mut(x, y);
+                    if item.contains(p)
+                        && !crop.rect.contains(mapping.canvas_to_source(p))
+                        && let Some(px) = image.get_pixel_mut_checked(x, y)
+                    {
                         px.0 = blend(px.0, [0, 0, 0, 0x90]);
                     }
                 }
@@ -247,7 +255,7 @@ impl Editor {
         // Smear brush outline under the pointer (SMEAR-001).
         if let (Some(tool), Some(at)) = (self.smear_tool(), self.hover) {
             let r = tool.size * view.zoom / 2.0;
-            let n = ((r * 0.8).ceil() as usize).clamp(16, 128);
+            let n = ((r * 0.8).ceil() as usize).clamped(16, 128);
             let ring: Vec<Point> = (0..n)
                 .map(|i| {
                     let a = i as f64 / n as f64 * std::f64::consts::TAU;
@@ -308,7 +316,13 @@ fn blend(dst: [u8; 4], src: [u8; 4]) -> [u8; 4] {
     if a == 0 {
         return dst;
     }
-    let mix = |s: u8, d: u8| ((u32::from(s) * a + u32::from(d) * (255 - a) + 127) / 255) as u8;
+    let mix = |s: u8, d: u8| {
+        let sum = u32::from(s)
+            .saturating_mul(a)
+            .saturating_add(u32::from(d).saturating_mul(255u32.saturating_sub(a)))
+            .saturating_add(127);
+        (sum / 255) as u8
+    };
     [
         mix(src[0], dst[0]),
         mix(src[1], dst[1]),
@@ -322,8 +336,9 @@ fn plot(image: &mut RgbaImage, x: f64, y: f64, color: [u8; 4]) {
     if x < 0.0 || y < 0.0 || x >= f64::from(w) || y >= f64::from(h) {
         return;
     }
-    let p = image.get_pixel_mut(x as u32, y as u32);
-    p.0 = blend(p.0, color);
+    if let Some(p) = image.get_pixel_mut_checked(x as u32, y as u32) {
+        p.0 = blend(p.0, color);
+    }
 }
 
 fn line(image: &mut RgbaImage, a: Point, b: Point, color: [u8; 4], width: f64, dash: Option<f64>) {
@@ -351,8 +366,7 @@ fn line(image: &mut RgbaImage, a: Point, b: Point, color: [u8; 4], width: f64, d
 }
 
 fn polygon(image: &mut RgbaImage, points: &[Point], color: [u8; 4], dash: Option<f64>) {
-    for (i, &a) in points.iter().enumerate() {
-        let b = points[(i + 1) % points.len()];
+    for (&a, &b) in points.iter().zip(points.iter().cycle().skip(1)) {
         line(image, a, b, color, 1.0, dash);
     }
 }
@@ -374,10 +388,10 @@ fn square(image: &mut RgbaImage, c: Point, r: f64, fill: [u8; 4], border: [u8; 4
 }
 
 fn disc(image: &mut RgbaImage, c: Point, r: f64, fill: [u8; 4], border: [u8; 4]) {
-    let ri = r.ceil() as i64 + 1;
-    for dy in -ri..=ri {
-        for dx in -ri..=ri {
-            let d = ((dx * dx + dy * dy) as f64).sqrt();
+    let ri = (r.ceil() as i64).saturating_add(1);
+    for dy in ri.saturating_neg()..=ri {
+        for dx in ri.saturating_neg()..=ri {
+            let d = ((dx as f64).powi(2) + (dy as f64).powi(2)).sqrt();
             if d <= r + 0.5 {
                 let color = if d >= r - 1.0 { border } else { fill };
                 plot(image, c.x + dx as f64, c.y + dy as f64, color);

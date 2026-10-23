@@ -5,6 +5,7 @@ use super::crop::ItemMapping;
 use super::{Editor, Selection};
 use crate::geometry::Point;
 use crate::model::{ItemId, SmearKind, Step, Stroke};
+use crate::panic_free::Clamped;
 
 /// Default strength (SMEAR-003).
 pub const DEFAULT_STRENGTH: f64 = 0.5;
@@ -80,7 +81,7 @@ impl Editor {
     /// Sets the strength, `0.01..=1`.
     pub fn set_smear_strength(&mut self, strength: f64) {
         if strength.is_finite() {
-            self.smear_settings.strength = strength.clamp(0.01, 1.0);
+            self.smear_settings.strength = strength.clamped(0.01, 1.0);
         }
     }
 

@@ -194,9 +194,9 @@ impl App {
             missing_notice: None,
             drops: Vec::new(),
         };
-        let result = match paths.len() {
-            0 => Ok(()),
-            1 => app.editor.open(&paths[0]),
+        let result = match paths.as_slice() {
+            [] => Ok(()),
+            [path] => app.editor.open(path),
             _ => app.editor.open_images(&paths),
         };
         if let Err(e) = result {
@@ -224,10 +224,10 @@ impl App {
         }
         self.exif_notice = self.editor.exif_notice();
         let missing = self.editor.missing_sources();
-        self.missing_notice = match missing.len() {
-            0 => None,
-            1 => Some(format!("{} is missing", missing[0].1)),
-            n => Some(format!("{n} source images are missing")),
+        self.missing_notice = match missing.as_slice() {
+            [] => None,
+            [(_, name, ..)] => Some(format!("{name} is missing")),
+            n => Some(format!("{} source images are missing", n.len())),
         };
         if let Some(crop) = self.editor.crop_tool() {
             let r = crop.pixel_rect();
@@ -328,7 +328,9 @@ impl App {
             Message::Picked(purpose, paths) => return dialogs::picked(self, purpose, paths),
             Message::PollBackground => {}
             Message::CropField(index, value) => {
-                self.crop_fields[index] = value;
+                if let Some(field) = self.crop_fields.get_mut(index) {
+                    *field = value;
+                }
                 let parsed: Vec<u32> = self
                     .crop_fields
                     .iter()
@@ -341,14 +343,17 @@ impl App {
                 return Task::none();
             }
             Message::CropAspect(label) => {
-                let aspect = match ASPECTS.iter().position(|a| *a == label) {
-                    Some(i) if i < AspectChoice::PRESETS.len() => AspectChoice::PRESETS[i],
-                    _ => self.custom_aspect(),
-                };
+                let aspect = ASPECTS
+                    .iter()
+                    .position(|a| *a == label)
+                    .and_then(|i| AspectChoice::PRESETS.get(i).copied())
+                    .unwrap_or_else(|| self.custom_aspect());
                 self.editor.set_crop_aspect(aspect);
             }
             Message::CropCustom(index, value) => {
-                self.custom_aspect[index] = value;
+                if let Some(field) = self.custom_aspect.get_mut(index) {
+                    *field = value;
+                }
                 let aspect = self.custom_aspect();
                 self.editor.set_crop_aspect(aspect);
             }
@@ -378,7 +383,9 @@ impl App {
                         self.editor.set_smear_strength(v / 100.0);
                     }
                 }
-                self.smear_fields[index] = value;
+                if let Some(field) = self.smear_fields.get_mut(index) {
+                    *field = value;
+                }
             }
             Message::Locate => {
                 if let Some((source, ..)) = self.editor.missing_sources().first() {
@@ -543,7 +550,7 @@ impl App {
         let field = |index: usize, label: &'static str| {
             row![
                 text(label),
-                text_input("", &self.smear_fields[index])
+                text_input("", self.smear_fields.get(index).map_or("", String::as_str))
                     .on_input(move |v| Message::SmearField(index, v))
                     .width(70)
             ]
@@ -579,7 +586,7 @@ impl App {
         let field = |index: usize, label: &'static str| {
             row![
                 text(label),
-                text_input("", &self.crop_fields[index])
+                text_input("", self.crop_fields.get(index).map_or("", String::as_str))
                     .on_input(move |v| Message::CropField(index, v))
                     .width(70)
             ]
@@ -589,7 +596,7 @@ impl App {
         let selected = AspectChoice::PRESETS
             .iter()
             .position(|a| *a == crop.aspect)
-            .map(|i| ASPECTS[i])
+            .and_then(|i| ASPECTS.get(i).copied())
             .unwrap_or("Custom");
         let aspect = pick_list(
             ASPECTS.map(str::to_owned).to_vec(),
@@ -813,4 +820,9 @@ impl Program<Message> for CanvasView<'_> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "tests may panic (RUST-001)"
+)]
 mod tests;

@@ -9,6 +9,9 @@ use image::codecs::jpeg::{JpegEncoder, PixelDensity, PixelDensityUnit};
 use image::codecs::png::PngEncoder;
 use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageReader, RgbImage, RgbaImage};
 
+use crate::panic_free;
+use crate::panic_free::Clamped;
+
 /// Image file formats.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Format {
@@ -150,7 +153,7 @@ pub struct Decoded {
 }
 
 fn is_heif_container(header: &[u8]) -> bool {
-    header.len() >= 12 && &header[4..8] == b"ftyp"
+    header.len() >= 12 && header.get(4..8) == Some(b"ftyp".as_slice())
 }
 
 /// Decodes an image file, applying its EXIF orientation (META-006).
@@ -189,11 +192,11 @@ pub fn decode_bytes(bytes: &[u8]) -> Result<Decoded, CodecError> {
     })
 }
 
-fn strip_exif_prefix(mut exif: Vec<u8>) -> Vec<u8> {
-    if exif.starts_with(b"Exif\0\0") {
-        exif.drain(..6);
+fn strip_exif_prefix(exif: Vec<u8>) -> Vec<u8> {
+    match exif.strip_prefix(b"Exif\0\0") {
+        Some(rest) => rest.to_vec(),
+        None => exif,
     }
-    exif
 }
 
 /// Export settings for one file.
@@ -211,13 +214,22 @@ pub struct EncodeOptions {
 pub const DEFAULT_QUALITY: u8 = 90;
 
 /// Composites transparent pixels onto white (EXPORT-004).
-pub fn flatten_onto_white(image: &RgbaImage) -> RgbImage {
-    RgbImage::from_fn(image.width(), image.height(), |x, y| {
-        let [r, g, b, a] = image.get_pixel(x, y).0;
+pub fn flatten_onto_white(image: &RgbaImage) -> Result<RgbImage, CodecError> {
+    panic_free::image_from_fn(image.width(), image.height(), |x, y| {
+        let [r, g, b, a] = image.get_pixel_checked(x, y).map_or([0; 4], |p| p.0);
         let a = u32::from(a);
-        let blend = |c: u8| ((u32::from(c) * a + 255 * (255 - a) + 127) / 255) as u8;
+        // a <= 255, so none of this saturates
+        let blend = |c: u8| {
+            let white = 255u32.saturating_mul(255u32.saturating_sub(a));
+            (u32::from(c)
+                .saturating_mul(a)
+                .saturating_add(white)
+                .saturating_add(127)
+                / 255) as u8
+        };
         image::Rgb([blend(r), blend(g), blend(b)])
     })
+    .ok_or_else(|| CodecError::Encode("image too large".into()))
 }
 
 /// Encodes an image to bytes in the requested format.
@@ -237,15 +249,15 @@ pub fn encode(image: &RgbaImage, options: &EncodeOptions) -> Result<Vec<u8>, Cod
                 .write_image(image.as_raw(), w, h, image::ExtendedColorType::Rgba8)
                 .map_err(|e| err(&e))?;
             if let Some(dpi) = options.dpi {
-                out = png_with_dpi(&out, dpi);
+                out = png_with_dpi(&out, dpi).ok_or_else(|| err(&"malformed PNG"))?;
             }
         }
         Format::Jpeg => {
-            let rgb = flatten_onto_white(image);
+            let rgb = flatten_onto_white(image)?;
             let mut encoder =
-                JpegEncoder::new_with_quality(&mut out, options.quality.clamp(1, 100));
+                JpegEncoder::new_with_quality(&mut out, options.quality.clamped(1, 100));
             if let Some(dpi) = options.dpi {
-                let d = dpi.round().clamp(1.0, f64::from(u16::MAX)) as u16;
+                let d = dpi.round().clamped(1.0, f64::from(u16::MAX)) as u16;
                 encoder.set_pixel_density(PixelDensity {
                     density: (d, d),
                     unit: PixelDensityUnit::Inches,
@@ -262,7 +274,7 @@ pub fn encode(image: &RgbaImage, options: &EncodeOptions) -> Result<Vec<u8>, Cod
         }
         Format::WebP => {
             let encoded = webp::Encoder::from_rgba(image.as_raw(), w, h)
-                .encode(f32::from(options.quality.clamp(1, 100)));
+                .encode(f32::from(options.quality.clamped(1, 100)));
             out = encoded.to_vec();
             if let Some(exif) = &options.exif {
                 out = webp_with_exif(&out, exif, w, h).ok_or_else(|| err(&"malformed WebP"))?;
@@ -286,7 +298,7 @@ pub fn encode(image: &RgbaImage, options: &EncodeOptions) -> Result<Vec<u8>, Cod
             tiff_image.write_data(image.as_raw()).map_err(|e| err(&e))?;
         }
         Format::Bmp => {
-            let rgb = flatten_onto_white(image);
+            let rgb = flatten_onto_white(image)?;
             let mut writer = BufWriter::new(Cursor::new(&mut out));
             image::codecs::bmp::BmpEncoder::new(&mut writer)
                 .write_image(rgb.as_raw(), w, h, image::ExtendedColorType::Rgb8)
@@ -295,9 +307,10 @@ pub fn encode(image: &RgbaImage, options: &EncodeOptions) -> Result<Vec<u8>, Cod
             if let Some(dpi) = options.dpi {
                 // BITMAPINFOHEADER resolution fields, pixels per meter.
                 let ppm = ((dpi / 0.0254).round() as i32).to_le_bytes();
-                if out.len() >= 46 {
-                    out[38..42].copy_from_slice(&ppm);
-                    out[42..46].copy_from_slice(&ppm);
+                if let Some(fields) = out.get_mut(38..46) {
+                    for (dst, src) in fields.iter_mut().zip(ppm.iter().chain(&ppm)) {
+                        *dst = *src;
+                    }
                 }
             }
         }
@@ -317,7 +330,7 @@ pub fn write(image: &RgbaImage, path: &Path, options: &EncodeOptions) -> Result<
 }
 
 /// Inserts a `pHYs` chunk after `IHDR` (PNG has no other way to carry DPI).
-fn png_with_dpi(png: &[u8], dpi: f64) -> Vec<u8> {
+fn png_with_dpi(png: &[u8], dpi: f64) -> Option<Vec<u8>> {
     // 8-byte signature, then IHDR: 4 length + 4 type + 13 data + 4 crc.
     const AFTER_IHDR: usize = 8 + 25;
     let ppm = (dpi / 0.0254).round() as u32;
@@ -329,11 +342,12 @@ fn png_with_dpi(png: &[u8], dpi: f64) -> Vec<u8> {
     body.push(1); // unit: meter
     chunk.extend_from_slice(&body);
     chunk.extend_from_slice(&crc32(&body).to_be_bytes());
-    let mut out = Vec::with_capacity(png.len() + chunk.len());
-    out.extend_from_slice(&png[..AFTER_IHDR]);
+    let (head, tail) = png.split_at_checked(AFTER_IHDR)?;
+    let mut out = Vec::with_capacity(png.len().saturating_add(chunk.len()));
+    out.extend_from_slice(head);
     out.extend_from_slice(&chunk);
-    out.extend_from_slice(&png[AFTER_IHDR..]);
-    out
+    out.extend_from_slice(tail);
+    Some(out)
 }
 
 fn crc32(data: &[u8]) -> u32 {
@@ -353,26 +367,28 @@ fn crc32(data: &[u8]) -> u32 {
 
 /// Adds an `EXIF` chunk to a WebP file, converting it to the extended (`VP8X`) layout.
 fn webp_with_exif(webp: &[u8], exif: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
-    if webp.len() < 12 || &webp[..4] != b"RIFF" || &webp[8..12] != b"WEBP" {
+    let (header, mut rest) = webp.split_at_checked(12)?;
+    if header.get(..4)? != b"RIFF" || header.get(8..)? != b"WEBP" {
         return None;
     }
     let mut chunks: Vec<([u8; 4], &[u8])> = Vec::new();
-    let mut pos = 12;
-    while pos + 8 <= webp.len() {
-        let tag: [u8; 4] = webp[pos..pos + 4].try_into().ok()?;
-        let len = u32::from_le_bytes(webp[pos + 4..pos + 8].try_into().ok()?) as usize;
-        let data = webp.get(pos + 8..pos + 8 + len)?;
+    while let Some((chunk_header, after)) = rest.split_at_checked(8) {
+        let (tag, len) = chunk_header.split_at_checked(4)?;
+        let tag: [u8; 4] = tag.try_into().ok()?;
+        let len = usize::try_from(u32::from_le_bytes(len.try_into().ok()?)).ok()?;
+        let data = after.get(..len)?;
         chunks.push((tag, data));
-        pos += 8 + len + (len & 1);
+        rest = after.get(len.checked_add(len & 1)?..).unwrap_or_default();
     }
     let has_alpha = chunks.iter().any(|(tag, _)| tag == b"ALPH");
-    let mut vp8x = vec![0u8; 10];
-    if let Some((_, data)) = chunks.iter().find(|(tag, _)| tag == b"VP8X") {
-        vp8x.copy_from_slice(data.get(..10)?);
+    let mut vp8x: [u8; 10] = if let Some((_, data)) = chunks.iter().find(|(tag, _)| tag == b"VP8X")
+    {
+        data.get(..10)?.try_into().ok()?
     } else {
-        vp8x[4..7].copy_from_slice(&(width - 1).to_le_bytes()[..3]);
-        vp8x[7..10].copy_from_slice(&(height - 1).to_le_bytes()[..3]);
-    }
+        let [w0, w1, w2, _] = width.checked_sub(1)?.to_le_bytes();
+        let [h0, h1, h2, _] = height.checked_sub(1)?.to_le_bytes();
+        [0, 0, 0, 0, w0, w1, w2, h0, h1, h2]
+    };
     vp8x[0] |= 0x08; // EXIF present
     if has_alpha {
         vp8x[0] |= 0x10;
@@ -408,6 +424,7 @@ mod heif {
     };
 
     use super::{CodecError, Decoded, EncodeOptions, Format};
+    use crate::panic_free::{self, Clamped};
 
     pub fn decode(bytes: &[u8]) -> Result<Decoded, CodecError> {
         let err = |e: libheif_rs::HeifError| CodecError::Decode(e.to_string());
@@ -416,13 +433,15 @@ mod heif {
         let handle = context.primary_image_handle().map_err(err)?;
         let mut ids = vec![0; handle.number_of_metadata_blocks(b"Exif").max(0) as usize];
         let count = handle.metadata_block_ids(&mut ids, b"Exif");
-        let exif = ids[..count]
-            .first()
+        let exif = ids
+            .iter()
+            .take(count)
+            .next()
             .and_then(|&id| handle.metadata(id).ok())
             .and_then(|block| {
                 // Exif blocks in HEIF start with a 4-byte offset to the TIFF header.
                 let offset = u32::from_be_bytes(block.get(..4)?.try_into().ok()?) as usize;
-                block.get(4 + offset..).map(<[u8]>::to_vec)
+                block.get(offset.checked_add(4)?..).map(<[u8]>::to_vec)
             });
         let image = lib
             .decode(&handle, ColorSpace::Rgb(RgbChroma::Rgba), None)
@@ -432,9 +451,14 @@ mod heif {
             .interleaved
             .ok_or_else(|| CodecError::Decode("no interleaved plane".into()))?;
         let (w, h) = (plane.width, plane.height);
-        let mut pixels = Vec::with_capacity(w as usize * h as usize * 4);
-        for row in plane.data.chunks(plane.stride).take(h as usize) {
-            pixels.extend_from_slice(&row[..w as usize * 4]);
+        let row_len = (w as usize).saturating_mul(4);
+        let mut pixels = Vec::with_capacity(row_len.saturating_mul(h as usize));
+        // a zero stride fails the row length check
+        for row in panic_free::chunks(plane.data, plane.stride).take(h as usize) {
+            let row = row
+                .get(..row_len)
+                .ok_or_else(|| CodecError::Decode("unexpected plane size".into()))?;
+            pixels.extend_from_slice(row);
         }
         let pixels = RgbaImage::from_raw(w, h, pixels)
             .ok_or_else(|| CodecError::Decode("unexpected plane size".into()))?;
@@ -457,7 +481,7 @@ mod heif {
             ))
         })?;
         encoder
-            .set_quality(EncoderQuality::Lossy(options.quality.clamp(1, 100)))
+            .set_quality(EncoderQuality::Lossy(options.quality.clamped(1, 100)))
             .map_err(err)?;
         let mut heif_image = Image::new(w, h, ColorSpace::Rgb(RgbChroma::Rgba)).map_err(err)?;
         heif_image
@@ -468,13 +492,14 @@ mod heif {
             let plane = planes
                 .interleaved
                 .ok_or_else(|| CodecError::Encode("no interleaved plane".into()))?;
-            let row_len = w as usize * 4;
-            for (dst, src) in plane
-                .data
-                .chunks_mut(plane.stride)
-                .zip(image.as_raw().chunks(row_len))
+            let row_len = (w as usize).saturating_mul(4);
+            // a zero stride fails the row length check
+            for (dst, src) in panic_free::chunks_mut(plane.data, plane.stride)
+                .zip(panic_free::chunks(image.as_raw(), row_len))
             {
-                dst[..row_len].copy_from_slice(src);
+                if !panic_free::copy_into(dst, src) {
+                    return Err(CodecError::Encode("unexpected plane size".into()));
+                }
             }
         }
         let mut context = HeifContext::new().map_err(err)?;
@@ -489,6 +514,11 @@ mod heif {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "tests may panic (RUST-001)"
+)]
 mod tests {
     use super::*;
 
@@ -501,7 +531,7 @@ mod tests {
     fn flattening_uses_white() {
         let image = RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 0, 0]));
         assert_eq!(
-            flatten_onto_white(&image).get_pixel(0, 0).0,
+            flatten_onto_white(&image).unwrap().get_pixel(0, 0).0,
             [255, 255, 255]
         );
     }

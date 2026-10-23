@@ -6,6 +6,7 @@ pub mod editor;
 pub mod geometry;
 pub mod metadata;
 pub mod model;
+pub mod panic_free;
 pub mod project;
 pub mod project_file;
 pub mod render;

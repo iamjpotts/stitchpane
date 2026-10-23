@@ -43,7 +43,7 @@ impl fmt::Display for LoadError {
                 write!(
                     f,
                     "step {} of the project file is invalid: {error}",
-                    index + 1
+                    index.saturating_add(1)
                 )
             }
         }
@@ -224,13 +224,18 @@ pub fn relative_path(base: &Path, target: &Path) -> String {
     for _ in common..base.len() {
         parts.push("..".to_owned());
     }
-    for component in &target[common..] {
+    for component in target.iter().skip(common) {
         parts.push(component.as_os_str().to_string_lossy().into_owned());
     }
     parts.join("/")
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_macros,
+    clippy::disallowed_methods,
+    reason = "tests may panic (RUST-001)"
+)]
 mod tests {
     use super::*;
 

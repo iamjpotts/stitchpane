@@ -27,6 +27,8 @@ use crate::model::{
     Curve, Feather, Filter, ItemId, Orientation, ProjectState, SourceId, Step, TransitionId,
     TransitionKind,
 };
+use crate::panic_free;
+use crate::panic_free::Clamped;
 use crate::project::Project;
 use crate::project_file;
 use crate::render::{Renderer, SourceProblem};
@@ -374,8 +376,9 @@ impl Editor {
             && let Some(index) = state.items.iter().position(|i| i.id == tool.item)
         {
             let items = &mut state.to_mut().items;
-            let item = items.remove(index);
-            items.push(crop::with_crop(&item, tool.limits));
+            if let Some(item) = panic_free::remove_at(items, index) {
+                items.push(crop::with_crop(&item, tool.limits));
+            }
         }
         state
     }
@@ -388,7 +391,7 @@ impl Editor {
 
     /// Sets zoom and scroll position directly.
     pub fn set_view(&mut self, zoom: f64, pan: crate::geometry::Point) {
-        self.view.zoom = zoom.clamp(view::MIN_ZOOM, view::MAX_ZOOM);
+        self.view.zoom = zoom.clamped(view::MIN_ZOOM, view::MAX_ZOOM);
         self.view.pan = pan;
         self.view.fit = false;
     }
@@ -466,7 +469,6 @@ impl Editor {
 
     /// Performs a command that needs no dialog. Returns false if it could not be done.
     pub fn execute(&mut self, command: Command) -> bool {
-        debug_assert!(!command.needs_ui(), "{command:?} needs a dialog");
         self.commit_pending();
         match command {
             Command::Undo => self.undo(),
@@ -571,10 +573,12 @@ impl Editor {
         let Some(from) = state.item_index(item) else {
             return false;
         };
-        let last = state.items.len() - 1;
+        let Some(last) = state.items.len().checked_sub(1) else {
+            return false;
+        };
         let index = match order {
             ZOrder::Front => last,
-            ZOrder::Forward => (from + 1).min(last),
+            ZOrder::Forward => from.saturating_add(1).min(last),
             ZOrder::Backward => from.saturating_sub(1),
             ZOrder::Back => 0,
         };
@@ -914,8 +918,10 @@ impl Editor {
     /// Default export settings (META-005: one item's EXIF when only one item has any).
     pub fn export_defaults(&mut self, path: &Path) -> ExportSettings {
         let with_exif = self.items_with_exif();
-        let metadata =
-            (self.project.state().items.len() == 1 && with_exif.len() == 1).then(|| with_exif[0]);
+        let metadata = match with_exif.as_slice() {
+            [only] if self.project.state().items.len() == 1 => Some(*only),
+            _ => None,
+        };
         ExportSettings {
             path: path.to_path_buf(),
             format: Format::from_path(path).unwrap_or(Format::Png),

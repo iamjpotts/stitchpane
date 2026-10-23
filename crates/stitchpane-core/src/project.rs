@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::model::{Canvas, ProjectState, SourceId, Step, StepError};
+use crate::model::{Canvas, ProjectState, SourceId, Step, StepError, next_id};
 
 /// A source image referenced by a project.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,15 +107,12 @@ impl Project {
         if let Some((&id, _)) = self.state.sources.iter().find(|(_, p)| **p == path) {
             return id;
         }
-        let id = SourceId(
+        let id = SourceId(next_id(
             self.sources
                 .iter()
                 .map(|s| s.id.0)
-                .chain(self.state.sources.keys().map(|k| k.0))
-                .max()
-                .unwrap_or(0)
-                + 1,
-        );
+                .chain(self.state.sources.keys().map(|k| k.0)),
+        ));
         self.sources.push(Source {
             id,
             path: path.clone(),
@@ -129,7 +126,7 @@ impl Project {
         self.state.apply(&step)?;
         self.steps.push(step);
         self.redo.clear();
-        self.changes += 1;
+        self.changes = self.changes.wrapping_add(1);
         Ok(())
     }
 
@@ -156,9 +153,11 @@ impl Project {
         let Some(step) = self.steps.pop() else {
             return false;
         };
-        self.redo.push(step);
-        self.replay();
-        self.changes += 1;
+        if let Err(step) = self.replay_without(step) {
+            self.steps.push(step);
+            return false;
+        }
+        self.changes = self.changes.wrapping_add(1);
         true
     }
 
@@ -172,7 +171,7 @@ impl Project {
             return false;
         }
         self.steps.push(step);
-        self.changes += 1;
+        self.changes = self.changes.wrapping_add(1);
         true
     }
 
@@ -194,14 +193,19 @@ impl Project {
         )
     }
 
-    fn replay(&mut self) {
+    /// Rebuilds the state from the recorded steps after `undone` was popped from them,
+    /// and moves `undone` to the redo history. Recorded steps were valid when applied and
+    /// replay is deterministic; if one fails anyway, the state is left unchanged and
+    /// `undone` is handed back.
+    fn replay_without(&mut self, undone: Step) -> Result<(), Step> {
         let mut state = self.initial_state();
         for step in &self.steps {
-            // Recorded steps were valid when applied and replay is deterministic.
-            state
-                .apply(step)
-                .expect("recorded steps replay without error");
+            if state.apply(step).is_err() {
+                return Err(undone);
+            }
         }
         self.state = state;
+        self.redo.push(undone);
+        Ok(())
     }
 }

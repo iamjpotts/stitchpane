@@ -12,6 +12,7 @@ use crate::codec;
 use crate::geometry::{Point, Rect};
 use crate::metadata::Exif;
 use crate::model::{Filter, Item, ItemId, ProjectState, SeamGeometry, Stroke, TransitionKind};
+use crate::panic_free::{self, Clamped};
 use crate::retouch;
 
 /// A decoded source image.
@@ -85,10 +86,11 @@ struct Worker {
 }
 
 impl Worker {
-    fn start() -> Self {
+    /// `None` when the thread cannot be created.
+    fn start() -> Option<Self> {
         let (jobs, job_rx) = mpsc::channel::<Job>();
         let (done_tx, done) = mpsc::channel();
-        std::thread::spawn(move || {
+        let spawned = std::thread::Builder::new().spawn(move || {
             while let Ok(first) = job_rx.recv() {
                 // Only the latest request for each item matters.
                 let mut latest: Vec<Job> = vec![first];
@@ -114,11 +116,12 @@ impl Worker {
                 }
             }
         });
-        Self {
+        spawned.ok()?;
+        Some(Self {
             jobs,
             done,
             pending: HashMap::new(),
-        }
+        })
     }
 }
 
@@ -182,10 +185,11 @@ impl Renderer {
     }
 
     /// Resamples items for previews in a background thread (UI-009). Until a resample is
-    /// ready, previews stretch the item's previous one.
+    /// ready, previews stretch the item's previous one. If the thread cannot be created,
+    /// previews stay resampled in the foreground.
     pub fn set_background(&mut self, enabled: bool) {
         if enabled != self.worker.is_some() {
-            self.worker = enabled.then(Worker::start);
+            self.worker = if enabled { Worker::start() } else { None };
         }
     }
 
@@ -377,7 +381,8 @@ impl Renderer {
         scale: f64,
         preview: bool,
     ) -> RgbaImage {
-        let mut image = RgbaImage::new(width, height);
+        // an image too large to address renders as an empty one
+        let mut image = panic_free::blank_image(width, height).unwrap_or_default();
         self.composite(state, region, scale, preview, &mut image);
         image
     }
@@ -434,19 +439,36 @@ impl Renderer {
 
         // Bands of rows are composited in parallel, each through all layers in order.
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-        let band_rows = height.div_ceil(threads as u32).max(16);
-        let row_bytes = width as usize * 4;
+        let threads = u32::try_from(threads).unwrap_or(u32::MAX).max(1);
+        // rows per band, rounded up
+        let band_rows = height
+            .saturating_add(threads.saturating_sub(1))
+            .checked_div(threads)
+            .unwrap_or(height)
+            .max(16);
+        let band_bytes = (band_rows as usize).saturating_mul((width as usize).saturating_mul(4));
+        let draw = |rows: &mut [u8], band: usize| {
+            let first_row = (band as u32).saturating_mul(band_rows);
+            for layer in &layers {
+                layer.draw(rows, first_row, width, region, scale);
+            }
+        };
+        // Bands whose thread cannot be created are drawn here afterwards.
+        let mut unstarted = Vec::new();
         std::thread::scope(|scope| {
-            for (band, rows) in out.chunks_mut(band_rows as usize * row_bytes).enumerate() {
-                let layers = &layers;
-                let first_row = band as u32 * band_rows;
-                scope.spawn(move || {
-                    for layer in layers {
-                        layer.draw(rows, first_row, width, region, scale);
-                    }
-                });
+            for (band, rows) in panic_free::chunks_mut(out, band_bytes).enumerate() {
+                let spawned =
+                    std::thread::Builder::new().spawn_scoped(scope, move || draw(rows, band));
+                if spawned.is_err() {
+                    unstarted.push(band);
+                }
             }
         });
+        for (band, rows) in panic_free::chunks_mut(out, band_bytes).enumerate() {
+            if unstarted.contains(&band) {
+                draw(rows, band);
+            }
+        }
     }
 }
 
@@ -470,9 +492,10 @@ impl Layer {
     /// Composites the layer over `rows`, output rows starting at `first_row`.
     fn draw(&self, rows: &mut [u8], first_row: u32, width: u32, region: Rect, scale: f64) {
         let item = &self.item;
-        let row_count = (rows.len() / (width as usize * 4)) as u32;
+        let row_bytes = (width as usize).saturating_mul(4);
+        let row_count = rows.len().checked_div(row_bytes).unwrap_or(0) as u32;
         let y0 = self.y0.max(first_row);
-        let y1 = self.y1.min(first_row + row_count);
+        let y1 = self.y1.min(first_row.saturating_add(row_count));
         // Canvas → item-local mapping, computed once per item (see Item::to_local).
         let frame = item.frame();
         let center = frame.center();
@@ -513,9 +536,16 @@ impl Layer {
                 if color[3] <= 0.0 {
                     continue;
                 }
-                let at = ((py - first_row) * width + px) as usize * 4;
-                let dst = &mut rows[at..at + 4];
-                let below = [0, 1, 2, 3].map(|i| f32::from(dst[i]) / 255.0);
+                let at = (py.saturating_sub(first_row) as usize)
+                    .saturating_mul(row_bytes)
+                    .saturating_add((px as usize).saturating_mul(4));
+                let Some(dst) = rows.get_mut(at..at.saturating_add(4)) else {
+                    continue;
+                };
+                let mut below = [0f32; 4];
+                for (b, d) in below.iter_mut().zip(dst.iter()) {
+                    *b = f32::from(*d) / 255.0;
+                }
                 let mixed = over(color, below);
                 for (d, v) in dst.iter_mut().zip(mixed) {
                     *d = to_u8(v);
@@ -553,7 +583,7 @@ fn smear(source: &RgbaImage, strokes: &[Stroke]) -> RgbaImage {
 }
 
 fn to_u8(v: f32) -> u8 {
-    (v.clamp(0.0, 1.0) * 255.0).round() as u8
+    (v.clamped(0.0, 1.0) * 255.0).round() as u8
 }
 
 /// Straight-alpha source-over compositing.
@@ -572,7 +602,7 @@ fn over(src: [f32; 4], dst: [f32; 4]) -> [f32; 4] {
 }
 
 fn texel(image: &RgbaImage, x: u32, y: u32) -> [f32; 4] {
-    let p = image.get_pixel(x, y).0;
+    let p = image.get_pixel_checked(x, y).map_or([0; 4], |p| p.0);
     [
         f32::from(p[0]) / 255.0,
         f32::from(p[1]) / 255.0,
@@ -638,7 +668,9 @@ fn placeholder(x: f64, y: f64, w: f64, h: f64) -> Option<[f32; 4]> {
 }
 
 fn effects_on(state: &ProjectState, index: usize) -> Vec<Effect> {
-    let item = &state.items[index];
+    let Some(item) = state.items.get(index) else {
+        return Vec::new();
+    };
     state
         .transitions_of(item.id)
         .filter_map(|t| {
