@@ -82,7 +82,9 @@ fn falloff(d2: f64, radius: f64) -> f32 {
 }
 
 fn read(image: &RgbaImage, x: i64, y: i64) -> Option<[f32; 4]> {
-    let (x, y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
+    let (Ok(x), Ok(y)) = (u32::try_from(x), u32::try_from(y)) else {
+        return None;
+    };
     Some(image.get_pixel_checked(x, y)?.0.map(f32::from))
 }
 
@@ -265,11 +267,6 @@ fn bilinear(area: &[[f32; 4]], side: usize, x: f64, y: f64) -> [f32; 4] {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::disallowed_macros,
-    clippy::disallowed_methods,
-    reason = "tests may panic (RUST-001)"
-)]
 mod tests {
     use super::*;
 

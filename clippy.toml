@@ -1,9 +1,5 @@
-# RUST-001: the panic lints set in Cargo.toml skip #[test] functions and #[cfg(test)]
-# modules; test crates under tests/ allow them at their root instead
-allow-expect-in-tests = true
-allow-indexing-slicing-in-tests = true
-allow-panic-in-tests = true
-allow-unwrap-in-tests = true
+# Production code configuration, used by the first `just clippy` run (`--lib --bins`).
+# Bans that also apply to test code are repeated in clippy/tests/clippy.toml.
 
 # panic macros (RUST-001)
 disallowed-macros = [
@@ -17,8 +13,12 @@ disallowed-macros = [
 ]
 
 # methods documented to panic, in std and dependencies, that have a fallible form or a
-# panic-free workaround (RUST-001). Test code allows `disallowed_methods`.
+# panic-free workaround (RUST-001)
 disallowed-methods = [
+    # RUST-003: these throw away the error; also in clippy/tests/clippy.toml
+    { path = "core::result::Result::is_ok", reason = "throws away the error (RUST-003)" },
+    { path = "core::result::Result::ok", reason = "throws away the error (RUST-003)" },
+    { path = "core::result::Result::is_err", reason = "throws away the error (RUST-003)" },
     # std::cell: panics when already borrowed
     { path = "core::cell::RefCell::borrow", reason = "panics when borrowed; use try_borrow" },
     { path = "core::cell::RefCell::borrow_mut", reason = "panics when borrowed; use try_borrow_mut" },

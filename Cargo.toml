@@ -28,6 +28,9 @@ unimplemented = "deny"
 unreachable = "deny"
 unwrap_in_result = "deny"
 unwrap_used = "deny"
+# these suggest Result::ok, is_ok and is_err, which RUST-003 bans
+manual_ok_err = "allow"
+redundant_pattern_matching = "allow"
 
 [workspace.dependencies]
 cucumber = "0.23"

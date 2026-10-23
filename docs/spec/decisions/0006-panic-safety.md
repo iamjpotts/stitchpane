@@ -20,22 +20,21 @@ permanent decision:
 
 ## Consequences
 
-- The lints are set to `deny` in the workspace `Cargo.toml`, and the panicking macros
-  and methods are listed in `clippy.toml`'s `disallowed-macros` and `disallowed-methods`,
-  so they apply to every target.
-- Test code is exempted in three ways:
-  - `clippy.toml`'s `allow-*-in-tests` settings exempt `#[test]` functions and
-    `#[cfg(test)]` modules from `unwrap_used`, `expect_used`, `panic` and
+- The lints are set to `deny` in the workspace `Cargo.toml`, so they apply to every
+  target. The panicking macros and methods are listed in `clippy.toml`'s
+  `disallowed-macros` and `disallowed-methods`.
+- `just clippy` runs clippy twice: over production code (`--lib --bins`) with
+  `clippy.toml`, then over all targets with `clippy/tests/clippy.toml`
+  (`CLIPPY_CONF_DIR`). The second file holds only the bans that apply to test code too
+  (RUST-003), so the panicking macros and methods are banned in production code only.
+- Test code is exempted from the `Cargo.toml` lints in two ways:
+  - `clippy/tests/clippy.toml`'s `allow-*-in-tests` settings exempt `#[test]` functions
+    and `#[cfg(test)]` modules from `unwrap_used`, `expect_used`, `panic` and
     `indexing_slicing`; `arithmetic_side_effects` skips them by itself.
-  - Each `#[cfg(test)]` module allows `clippy::disallowed_macros` and
-    `clippy::disallowed_methods`.
   - Each test crate root under `tests/` (today `tests/features.rs`) allows all the
     panic lints, because cucumber steps are not `#[test]` functions.
 - `todo`, `unreachable`, `string_slice` and `get_unwrap` have no test exemption, so they
   are banned in `#[cfg(test)]` modules too. That is accepted.
-- Because test code allows `disallowed_methods` and `disallowed_macros` as a whole, a
-  future ban meant for test code as well (such as `Result::is_err`) needs its own
-  mechanism, for example a second clippy configuration for the test run.
 - Review enforces that `#[allow]`/`#[expect]` of a panic lint appears only in test code.
   The lint list is written in `Cargo.toml` and repeated in each test crate's root; some
   drift between the copies is accepted rather than adding a third copy to check them.

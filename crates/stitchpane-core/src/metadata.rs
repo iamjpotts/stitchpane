@@ -138,7 +138,9 @@ impl Exif {
     /// Parses TIFF-structured EXIF data. Returns `None` if it is unreadable or empty.
     pub fn parse(raw: &[u8]) -> Option<Exif> {
         let raw = raw.strip_prefix(b"Exif\0\0").unwrap_or(raw);
-        let exif = exif::Reader::new().read_raw(raw.to_vec()).ok()?;
+        let Ok(exif) = exif::Reader::new().read_raw(raw.to_vec()) else {
+            return None;
+        };
         let fields: Vec<Field> = exif
             .fields()
             .filter(|f| f.ifd_num == In::PRIMARY && !is_structural(f.tag))
@@ -241,7 +243,9 @@ impl Exif {
             writer.push_field(field);
         }
         let mut out = Cursor::new(Vec::new());
-        writer.write(&mut out, self.little_endian).ok()?;
-        Some(out.into_inner())
+        match writer.write(&mut out, self.little_endian) {
+            Ok(()) => Some(out.into_inner()),
+            Err(_) => None,
+        }
     }
 }

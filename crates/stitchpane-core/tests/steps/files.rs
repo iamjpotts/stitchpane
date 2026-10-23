@@ -255,7 +255,7 @@ fn recorded_dpi(bytes: &[u8]) -> Option<f64> {
     match sniff(bytes) {
         "PNG" => {
             let at = bytes.windows(4).position(|w| w == b"pHYs")? + 4;
-            let ppm = u32::from_be_bytes(bytes[at..at + 4].try_into().ok()?);
+            let ppm = u32::from_be_bytes(bytes[at..at + 4].try_into().expect("pHYs has 4 bytes"));
             (bytes[at + 8] == 1).then(|| f64::from(ppm) * 0.0254)
         }
         "JPEG" => {
@@ -265,14 +265,18 @@ fn recorded_dpi(bytes: &[u8]) -> Option<f64> {
             (units == 1).then_some(f64::from(density))
         }
         "BMP" => {
-            let ppm = i32::from_le_bytes(bytes.get(38..42)?.try_into().ok()?);
+            let ppm = i32::from_le_bytes(bytes[38..42].try_into().expect("BMP has 4 bytes"));
             Some(f64::from(ppm) * 0.0254)
         }
         "TIFF" => {
-            let mut decoder = tiff::decoder::Decoder::new(std::io::Cursor::new(bytes)).ok()?;
-            match decoder.get_tag(tiff::tags::Tag::XResolution).ok()? {
+            let mut decoder =
+                tiff::decoder::Decoder::new(std::io::Cursor::new(bytes)).expect("TIFF decodes");
+            match decoder
+                .find_tag(tiff::tags::Tag::XResolution)
+                .expect("TIFF tags read")?
+            {
                 tiff::decoder::ifd::Value::Rational(n, d) => Some(f64::from(n) / f64::from(d)),
-                other => other.into_f64().ok(),
+                other => Some(other.into_f64().expect("XResolution is a number")),
             }
         }
         _ => None,

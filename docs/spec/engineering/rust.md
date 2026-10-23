@@ -7,6 +7,17 @@ Standards for how the Rust code is written. Each standard names what enforces it
 excluding `#[cfg(test)]` modules. **Test code** is everything else (`#[cfg(test)]`
 modules, test targets, the cucumber steps).
 
+Clippy runs twice (`just clippy`). The first run checks production code with
+`clippy.toml`, which holds every banned macro and method. The second run checks all code,
+tests included, with `clippy/tests/clippy.toml`, which holds only the bans that also apply
+to test code. A ban for both lives in both files.
+
+To have rust-analyzer show the same diagnostics, set its check command to
+`scripts/ra-check.sh`, which runs both passes, in the editor's rust-analyzer settings
+(for example `"rust-analyzer.check.overrideCommand": ["scripts/ra-check.sh"]`). A
+project-level `rust-analyzer.toml` does not work for this: rust-analyzer 1.99 reads the
+file but ignores `check.overrideCommand` from it.
+
 ## Panics
 
 ### RUST-001: No panic paths
@@ -63,3 +74,24 @@ panic is documented or known from inspecting the dependency's source.
   case is glib's `Object::new` and `ObjectBuilder::build`, which panic when the type
   cannot be instantiated or a property does not exist; GTK's generated constructors and
   builders only set properties the type has.
+
+## Errors
+
+### RUST-003: Keep error details
+Status: Implemented
+Enforced by: clippy (disallowed_methods: `Result::is_ok`, `Result::ok`, `Result::is_err`, in `clippy.toml` and `clippy/tests/clippy.toml`); review
+
+Production and test code shall not call `Result::is_ok`, `Result::ok` or
+`Result::is_err`, which throw away the error.
+
+- Production code shall propagate the error, report it, or match it explicitly
+  (`match`, `if let`, `let ... else`) where the failure itself is the answer.
+- Test code shall keep failure details by using `unwrap()`, `expect()` or
+  `expect_err()` instead, not an equivalent such as `matches!(result, Ok(_))`.
+- When test code checks that an operation fails, it shall assert the error's details
+  (its type or variant, its fields, or its string form), not only that the outcome was
+  `Err`.
+
+Clippy's `manual_ok_err` and `redundant_pattern_matching` lints suggest these methods, so
+they are allowed in the workspace `Cargo.toml`.
+

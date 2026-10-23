@@ -334,7 +334,11 @@ impl App {
                 let parsed: Vec<u32> = self
                     .crop_fields
                     .iter()
-                    .filter_map(|v| v.trim().parse().ok())
+                    // a field that is not a number leaves the crop unchanged
+                    .filter_map(|v| match v.trim().parse() {
+                        Ok(n) => Some(n),
+                        Err(_) => None,
+                    })
                     .collect();
                 if let [l, t, w, h] = parsed[..] {
                     self.editor
@@ -820,9 +824,4 @@ impl Program<Message> for CanvasView<'_> {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::disallowed_macros,
-    clippy::disallowed_methods,
-    reason = "tests may panic (RUST-001)"
-)]
 mod tests;

@@ -251,7 +251,11 @@ async fn pick_files(ui: &Rc<Ui>, title: &str, with_projects: bool) -> Vec<PathBu
         return Vec::new();
     };
     (0..files.n_items())
-        .filter_map(|i| picked(ui, &files.item(i)?.downcast::<gio::File>().ok()?))
+        .filter_map(|i| match files.item(i)?.downcast::<gio::File>() {
+            Ok(file) => picked(ui, &file),
+            // the dialog only returns files
+            Err(_) => None,
+        })
         .collect()
 }
 

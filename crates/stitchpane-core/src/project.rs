@@ -166,7 +166,7 @@ impl Project {
         let Some(step) = self.redo.pop() else {
             return false;
         };
-        if self.state.apply(&step).is_err() {
+        if let Err(_) = self.state.apply(&step) {
             self.redo.push(step);
             return false;
         }
@@ -200,7 +200,7 @@ impl Project {
     fn replay_without(&mut self, undone: Step) -> Result<(), Step> {
         let mut state = self.initial_state();
         for step in &self.steps {
-            if state.apply(step).is_err() {
+            if let Err(_) = state.apply(step) {
                 return Err(undone);
             }
         }

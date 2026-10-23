@@ -110,13 +110,14 @@ impl Worker {
                         bits: job.bits,
                         pixels,
                     };
-                    if done_tx.send(done).is_err() {
+                    // the receiver is gone, so nobody wants the results
+                    if let Err(_) = done_tx.send(done) {
                         return;
                     }
                 }
             }
         });
-        spawned.ok()?;
+        let Ok(_) = spawned else { return None };
         Some(Self {
             jobs,
             done,
@@ -264,7 +265,9 @@ impl Renderer {
         stale_ok: bool,
     ) -> Option<Arc<RgbaImage>> {
         let path = state.sources.get(&item.source)?.clone();
-        let source = self.source(&path).ok()?;
+        let Ok(source) = self.source(&path) else {
+            return None;
+        };
         let strokes = state.strokes_of(item.id);
         let key = ItemKey {
             crop: item.crop,
@@ -333,7 +336,8 @@ impl Renderer {
                         source,
                         strokes: strokes.to_vec(),
                     };
-                    if worker.jobs.send(job).is_err() {
+                    // the worker thread has stopped; resample in the foreground from now on
+                    if let Err(_) = worker.jobs.send(job) {
                         self.worker = None;
                     }
                 }
@@ -459,7 +463,7 @@ impl Renderer {
             for (band, rows) in panic_free::chunks_mut(out, band_bytes).enumerate() {
                 let spawned =
                     std::thread::Builder::new().spawn_scoped(scope, move || draw(rows, band));
-                if spawned.is_err() {
+                if let Err(_) = spawned {
                     unstarted.push(band);
                 }
             }

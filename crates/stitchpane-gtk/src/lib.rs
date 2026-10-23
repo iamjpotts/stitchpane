@@ -976,11 +976,6 @@ impl Ui {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::disallowed_macros,
-    clippy::disallowed_methods,
-    reason = "tests may panic (RUST-001)"
-)]
 mod tests {
     //! GTK wiring tests. They need a display and are skipped without one. All GTK calls
     //! stay on this one test's thread.
@@ -1017,7 +1012,8 @@ mod tests {
         if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
             return;
         }
-        if gtk4::init().is_err() {
+        if let Err(error) = gtk4::init() {
+            eprintln!("skipping: GTK did not initialize: {error}");
             return;
         }
         let dir = std::env::temp_dir().join(format!("stitchpane-gtk-test-{}", std::process::id()));

@@ -69,9 +69,20 @@ fn click(app: &mut App, label: &str) {
     }
 }
 
-fn shows(app: &App, label: &str) -> bool {
+fn assert_shows(app: &App, label: &str) {
     let mut ui = simulator(app.view());
-    ui.find(label).is_ok()
+    if let Err(error) = ui.find(label) {
+        panic!("{label:?} is not shown: {error}");
+    }
+}
+
+fn assert_hides(app: &App, label: &str) {
+    let mut ui = simulator(app.view());
+    let error = ui.find(label).map(|_| ()).expect_err("label is shown");
+    assert!(
+        matches!(&error, iced_test::Error::SelectorNotFound { selector } if selector.contains(label)),
+        "{error}"
+    );
 }
 
 fn item(app: &App, id: u32) -> stitchpane_core::model::Item {
@@ -113,8 +124,9 @@ fn undo_tooltip_names_the_step() {
     let _ = app.update(Message::PointerMove(IPoint::new(500.0, 300.0)));
     let mut ui = simulator(app.view());
     ui.point_at(IPoint::new(0.0, 0.0));
-    let found = ui.click("Undo").is_ok();
-    assert!(found);
+    if let Err(error) = ui.click("Undo") {
+        panic!("Undo is not clickable: {error}");
+    }
     assert_eq!(app.editor.undo_label().as_deref(), Some("Undo Move image"));
 }
 
@@ -128,10 +140,10 @@ fn context_menu_starts_cropping() {
         IPoint::new(512.0, 320.0),
         PointerButton::Secondary,
     ));
-    assert!(shows(&app, "Resize…"));
+    assert_shows(&app, "Resize…");
     click(&mut app, "Crop");
     assert!(app.editor.crop_tool().is_some());
-    assert!(shows(&app, "Apply"));
+    assert_shows(&app, "Apply");
     let _ = app.update(Message::CropField(2, String::new()));
     assert_eq!(app.crop_fields[2], "");
     let _ = app.update(Message::CropField(2, "100".to_owned()));
@@ -148,10 +160,10 @@ fn exif_notice_opens_viewer_and_strips() {
     let mut app = app_with(&[&a]);
     click(&mut app, "ⓘ Contains EXIF metadata");
     assert!(matches!(app.modal, Some(Modal::Exif { .. })));
-    assert!(shows(&app, "Camera"));
+    assert_shows(&app, "Camera");
     click(&mut app, "Strip metadata");
     assert!(app.modal.is_none());
-    assert!(!shows(&app, "ⓘ Contains EXIF metadata"));
+    assert_hides(&app, "ⓘ Contains EXIF metadata");
 }
 
 #[test]
@@ -166,7 +178,7 @@ fn closing_with_changes_asks_to_save() {
         y: 5
     }));
     let _ = app.update(Message::CloseRequested(window::Id::unique()));
-    assert!(shows(&app, "Discard"));
+    assert_shows(&app, "Discard");
     click(&mut app, "Cancel");
     assert!(app.modal.is_none());
 }
@@ -179,7 +191,7 @@ fn opening_several_images_asks_for_the_canvas() {
     let b = dir.image("b.png", 40, 80, None);
     let mut app = app_with(&[]);
     let _ = app.update(Message::Picked(dialogs::Purpose::Open, vec![a, b]));
-    assert!(shows(&app, "New composition — canvas size"));
+    assert_shows(&app, "New composition — canvas size");
     let _ = app.update(Message::Modal(dialogs::ModalMessage::Choice(1)));
     click(&mut app, "Create");
     assert_eq!(app.editor.project().state().canvas_size(), (100, 130));
@@ -192,9 +204,9 @@ fn exporting_over_a_source_asks_first() {
     let a = dir.image("a.png", 40, 30, None);
     let mut app = app_with(&[&a]);
     let _ = app.update(Message::Picked(dialogs::Purpose::Export, vec![a.clone()]));
-    assert!(shows(&app, "Overwrite"));
+    assert_shows(&app, "Overwrite");
     click(&mut app, "Overwrite");
-    assert!(shows(&app, "EXIF metadata from"));
+    assert_shows(&app, "EXIF metadata from");
     click(&mut app, "Export");
     assert!(app.modal.is_none());
 }
@@ -245,7 +257,7 @@ fn edit_menu_names_the_steps() {
         y: 5
     }));
     click(&mut app, "Edit");
-    assert!(shows(&app, "Undo Move image  (Ctrl+Z)"));
+    assert_shows(&app, "Undo Move image  (Ctrl+Z)");
     click(&mut app, "Undo Move image  (Ctrl+Z)");
     assert_eq!((item(&app, 1).x, item(&app, 1).y), (0, 0));
 }
@@ -316,7 +328,7 @@ fn status_bar_zoom_opens_the_zoom_menu() {
     let mut app = app_with(&[&a]);
     let label = app.editor.zoom_text();
     click(&mut app, &label);
-    assert!(shows(&app, "Zoom in"));
+    assert_shows(&app, "Zoom in");
     click(&mut app, "100%");
     assert_eq!(app.editor.zoom_text(), "zoom 100%");
 }
@@ -332,7 +344,7 @@ fn smear_bar_sets_the_brush_and_strokes_record_steps() {
         PointerButton::Secondary,
     ));
     click(&mut app, "Smear");
-    assert!(shows(&app, "Done"));
+    assert_shows(&app, "Done");
     let _ = app.update(Message::SmearField(0, "40".to_owned()));
     let _ = app.update(Message::SmearChoice("Blur".to_owned()));
     let tool = app.editor.smear_tool().expect("smear tool");

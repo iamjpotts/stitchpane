@@ -234,7 +234,8 @@ impl Editor {
         let state = self.display_state().into_owned();
         let Some(step) = make(&state) else { return };
         let mut check = self.project.state().clone();
-        if check.apply(&step).is_ok() {
+        // a step the project rejects is not offered as pending
+        if let Ok(()) = check.apply(&step) {
             self.pending = Some((target, step));
         }
     }

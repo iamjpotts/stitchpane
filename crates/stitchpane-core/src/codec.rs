@@ -175,11 +175,11 @@ pub fn decode_bytes(bytes: &[u8]) -> Result<Decoded, CodecError> {
     let mut decoder = reader
         .into_decoder()
         .map_err(|e| CodecError::Decode(e.to_string()))?;
-    let exif = decoder
-        .exif_metadata()
-        .ok()
-        .flatten()
-        .map(strip_exif_prefix);
+    // unreadable EXIF is treated as none, so the image still opens
+    let exif = match decoder.exif_metadata() {
+        Ok(exif) => exif.map(strip_exif_prefix),
+        Err(_) => None,
+    };
     let orientation = decoder
         .orientation()
         .unwrap_or(image::metadata::Orientation::NoTransforms);
@@ -374,8 +374,10 @@ fn webp_with_exif(webp: &[u8], exif: &[u8], width: u32, height: u32) -> Option<V
     let mut chunks: Vec<([u8; 4], &[u8])> = Vec::new();
     while let Some((chunk_header, after)) = rest.split_at_checked(8) {
         let (tag, len) = chunk_header.split_at_checked(4)?;
-        let tag: [u8; 4] = tag.try_into().ok()?;
-        let len = usize::try_from(u32::from_le_bytes(len.try_into().ok()?)).ok()?;
+        let tag: [u8; 4] = *tag.first_chunk()?;
+        let Ok(len) = usize::try_from(u32::from_le_bytes(*len.first_chunk()?)) else {
+            return None;
+        };
         let data = after.get(..len)?;
         chunks.push((tag, data));
         rest = after.get(len.checked_add(len & 1)?..).unwrap_or_default();
@@ -383,7 +385,7 @@ fn webp_with_exif(webp: &[u8], exif: &[u8], width: u32, height: u32) -> Option<V
     let has_alpha = chunks.iter().any(|(tag, _)| tag == b"ALPH");
     let mut vp8x: [u8; 10] = if let Some((_, data)) = chunks.iter().find(|(tag, _)| tag == b"VP8X")
     {
-        data.get(..10)?.try_into().ok()?
+        *data.first_chunk()?
     } else {
         let [w0, w1, w2, _] = width.checked_sub(1)?.to_le_bytes();
         let [h0, h1, h2, _] = height.checked_sub(1)?.to_le_bytes();
@@ -437,10 +439,14 @@ mod heif {
             .iter()
             .take(count)
             .next()
-            .and_then(|&id| handle.metadata(id).ok())
+            // unreadable EXIF is treated as none, so the image still opens
+            .and_then(|&id| match handle.metadata(id) {
+                Ok(block) => Some(block),
+                Err(_) => None,
+            })
             .and_then(|block| {
                 // Exif blocks in HEIF start with a 4-byte offset to the TIFF header.
-                let offset = u32::from_be_bytes(block.get(..4)?.try_into().ok()?) as usize;
+                let offset = u32::from_be_bytes(*block.first_chunk()?) as usize;
                 block.get(offset.checked_add(4)?..).map(<[u8]>::to_vec)
             });
         let image = lib
@@ -514,11 +520,6 @@ mod heif {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::disallowed_macros,
-    clippy::disallowed_methods,
-    reason = "tests may panic (RUST-001)"
-)]
 mod tests {
     use super::*;
 

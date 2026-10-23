@@ -231,11 +231,6 @@ pub fn relative_path(base: &Path, target: &Path) -> String {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::disallowed_macros,
-    clippy::disallowed_methods,
-    reason = "tests may panic (RUST-001)"
-)]
 mod tests {
     use super::*;
 

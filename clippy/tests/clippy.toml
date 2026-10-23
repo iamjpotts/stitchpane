@@ -1,0 +1,17 @@
+# Configuration for the second `just clippy` run, over all targets including tests
+# (CLIPPY_CONF_DIR=clippy/tests). Holds only the bans that apply to test code too; they
+# are repeated in the root clippy.toml for production code.
+
+# RUST-001: the panic lints set in Cargo.toml skip #[test] functions and #[cfg(test)]
+# modules; test crates under tests/ allow them at their root instead
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests = true
+allow-unwrap-in-tests = true
+
+disallowed-methods = [
+    # RUST-003: these throw away the error; also in the root clippy.toml
+    { path = "core::result::Result::is_ok", reason = "throws away the error (RUST-003)" },
+    { path = "core::result::Result::ok", reason = "throws away the error (RUST-003)" },
+    { path = "core::result::Result::is_err", reason = "throws away the error (RUST-003)" },
+]

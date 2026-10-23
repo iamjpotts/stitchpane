@@ -31,7 +31,7 @@ Ubuntu 24.04 or later.
 
 # Build Dependencies
 
-`libgtk-4-dev` (for the default GTK build), `libheif-dev`.
+`libgtk-4-dev` (for the default GTK build), `libheif-dev`, `jq`.
 
 # Runtime Dependencies
 

@@ -426,7 +426,11 @@ fn canvas_choices() -> Vec<CanvasChoice> {
 }
 
 fn num(text: &str) -> Option<f64> {
-    text.trim().parse::<f64>().ok().filter(|v| v.is_finite())
+    match text.trim().parse::<f64>() {
+        Ok(v) if v.is_finite() => Some(v),
+        // text that is not a number is not applied
+        Ok(_) | Err(_) => None,
+    }
 }
 
 /// Updates the open dialog; `Ok` applies it.

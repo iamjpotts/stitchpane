@@ -2,11 +2,9 @@
 //! with the requirement IDs they verify (see `docs/spec/README.md`).
 
 // test code may panic to keep its assertions short (RUST-001); allows every panic lint
-// set in the workspace Cargo.toml, and the macro and method bans in clippy.toml
+// set in the workspace Cargo.toml
 #![allow(
     clippy::arithmetic_side_effects,
-    clippy::disallowed_macros,
-    clippy::disallowed_methods,
     clippy::exit,
     clippy::expect_used,
     clippy::get_unwrap,

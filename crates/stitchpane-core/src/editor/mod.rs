@@ -364,10 +364,10 @@ impl Editor {
         let mut state = match preview {
             Some(step) => {
                 let mut state = self.project.state().clone();
-                if state.apply(step).is_ok() {
-                    Cow::Owned(state)
-                } else {
-                    Cow::Borrowed(self.project.state())
+                // a preview the project rejects shows the state without it
+                match state.apply(step) {
+                    Ok(()) => Cow::Owned(state),
+                    Err(_) => Cow::Borrowed(self.project.state()),
                 }
             }
             None => Cow::Borrowed(self.project.state()),
@@ -832,8 +832,11 @@ impl Editor {
                 state
                     .sources
                     .get(&item.source)
-                    .and_then(|p| self.renderer.source(p).ok())
-                    .is_some_and(|s| s.exif.is_some())
+                    .is_some_and(|p| match self.renderer.source(p) {
+                        Ok(source) => source.exif.is_some(),
+                        // a missing or unreadable source has no EXIF to export
+                        Err(_) => false,
+                    })
             })
             .map(|item| item.id)
             .collect()
@@ -858,7 +861,11 @@ impl Editor {
             return None;
         }
         let path = state.sources.get(&item.source)?.clone();
-        self.renderer.source(&path).ok()?.exif.clone()
+        match self.renderer.source(&path) {
+            Ok(source) => source.exif.clone(),
+            // a missing or unreadable source has no EXIF to show
+            Err(_) => None,
+        }
     }
 
     /// Status bar notice about EXIF metadata (META-001).

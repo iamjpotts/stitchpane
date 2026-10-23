@@ -125,7 +125,7 @@ fn composition_with(world: &mut World, a: String, b: String, choice: String) {
     regex = r#"^I create a composition of "([^"]+)" and "([^"]+)" with a custom canvas of (\d+) by (\d+) pixels(?: at (\d+) DPI)?$"#
 )]
 fn composition_custom(world: &mut World, a: String, b: String, w: u32, h: u32, dpi: String) {
-    let dpi = dpi.parse::<f64>().ok();
+    let dpi = (!dpi.is_empty()).then(|| dpi.parse::<f64>().expect("DPI is a number"));
     compose(
         world,
         &[&a, &b],

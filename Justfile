@@ -15,9 +15,13 @@ check:
     @cargo check --workspace --all-targets
     @cargo check -p stitchpane --all-targets --no-default-features --features iced
 
+# production code with clippy.toml, then all targets with clippy/tests/clippy.toml (RUST-001)
 clippy:
-    @cargo clippy --workspace --all-targets -- -D warnings
-    @cargo clippy -p stitchpane --all-targets --no-default-features --features iced -- -D warnings
+    @cargo clippy --workspace --lib --bins -- -D warnings
+    @cargo clippy -p stitchpane --lib --bins --no-default-features --features iced -- -D warnings
+    @test -f clippy/tests/clippy.toml
+    @CLIPPY_CONF_DIR=clippy/tests cargo clippy --workspace --all-targets -- -D warnings
+    @CLIPPY_CONF_DIR=clippy/tests cargo clippy -p stitchpane --all-targets --no-default-features --features iced -- -D warnings
 
 deny:
     @cargo deny check

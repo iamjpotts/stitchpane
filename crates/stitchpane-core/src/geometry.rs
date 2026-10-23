@@ -145,11 +145,6 @@ fn snap_unit(v: f64) -> f64 {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::disallowed_macros,
-    clippy::disallowed_methods,
-    reason = "tests may panic (RUST-001)"
-)]
 mod tests {
     use super::*;
 
