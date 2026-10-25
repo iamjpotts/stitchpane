@@ -46,3 +46,10 @@ Ubuntu 24.04 or later.
 `stitchpane [image or project files…]`. Several images start a composition. Drag images to
 move them, use the handles to resize and rotate, and right-click images, seams and the
 canvas for more. The arrow keys, `[` and `]` make fine adjustments.
+
+# License
+
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your
+option. Unless you state otherwise, any contribution you submit is licensed the same way.
+
+Binaries built from this source include third-party code under its own licenses.

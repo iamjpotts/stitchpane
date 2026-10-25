@@ -34,5 +34,7 @@ ADR in `decisions/`.
 
 ## Licensing
 
-12. Stitch Pane is currently unlicensed (private, personal use). Dependency license
-    obligations will be reviewed when a license is chosen.
+12. Stitch Pane is licensed `MIT OR Apache-2.0` and distributed as source only. Every
+    dependency, including system libraries and C code bundled in `-sys` crates, shall be
+    under a license compatible with this, and shall impose no obligation on a source-only
+    release.

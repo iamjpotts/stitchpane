@@ -4072,7 +4072,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stitchpane"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "stitchpane-gtk",
  "stitchpane-iced",
@@ -4080,7 +4080,7 @@ dependencies = [
 
 [[package]]
 name = "stitchpane-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cucumber",
  "futures",
@@ -4095,7 +4095,7 @@ dependencies = [
 
 [[package]]
 name = "stitchpane-gtk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gtk4",
  "image",
@@ -4104,7 +4104,7 @@ dependencies = [
 
 [[package]]
 name = "stitchpane-iced"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "iced",
  "iced_test",
