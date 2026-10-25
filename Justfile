@@ -1,5 +1,3 @@
-# iced UI tests render headlessly with the software renderer
-export ICED_TEST_BACKEND := "tiny-skia"
 
 default:
     @just -l

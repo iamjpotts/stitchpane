@@ -1,0 +1,6 @@
+[env]
+# iced UI tests render headlessly with the software renderer. Without this, every test
+# thread starts its own wgpu (Vulkan/GL) renderer, which intermittently segfaults inside
+# the GPU drivers. Set here rather than in the Justfile so plain `cargo test` and IDE test
+# runners get it too; `force` overrides a value already set in the environment.
+ICED_TEST_BACKEND = { value = "tiny-skia", force = true }
