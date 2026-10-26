@@ -640,6 +640,11 @@ impl App {
                 entry("Save  (Ctrl+S)".into(), Command::Save),
                 entry("Save as…  (Ctrl+Shift+S)".into(), Command::SaveAs),
                 entry("Export…  (Ctrl+E)".into(), Command::Export),
+                MenuEntry {
+                    label: String::new(),
+                    command: None,
+                },
+                entry("Quit  (Ctrl+Q)".into(), Command::Quit),
             ],
             MenuKind::Edit => vec![
                 entry(

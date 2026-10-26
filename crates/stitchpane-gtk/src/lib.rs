@@ -525,7 +525,7 @@ impl Ui {
     }
 
     fn install_actions(self: &Rc<Self>) {
-        let actions: [(&str, Command); 14] = [
+        let actions: [(&str, Command); 15] = [
             ("open", Command::Open),
             ("add", Command::AddImages),
             ("save", Command::Save),
@@ -540,6 +540,7 @@ impl Ui {
             ("canvas-size", Command::CanvasSize),
             ("dpi", Command::SetDpi),
             ("exif", Command::ExifViewer(None)),
+            ("quit", Command::Quit),
         ];
         for (name, command) in actions {
             let action = gio::SimpleAction::new(name, None);
@@ -617,6 +618,10 @@ impl Ui {
         image.append_item(&item("Set DPI…", "win.dpi", None));
         image.append_item(&item("Show EXIF metadata…", "win.exif", None));
         menu.append_submenu(Some("Image"), &image);
+        // UI-013: Quit ends the primary menu in its own section (GNOME convention).
+        let quit = gio::Menu::new();
+        quit.append_item(&item("Quit", "win.quit", Some("<Control>q")));
+        menu.append_section(None, &quit);
         menu
     }
 
@@ -1349,6 +1354,24 @@ mod tests {
         );
         ui.command(Command::EndDodgeBurn);
         assert!(!ui.dodge.container.is_visible());
+
+        // spec: UI-013 — the main menu ends with Quit, in its own section.
+        let model = ui.menu_model();
+        let last = model.n_items() - 1;
+        let section = model
+            .item_link(last, gio::MENU_LINK_SECTION)
+            .expect("a last section");
+        let label = section.item_attribute_value(0, gio::MENU_ATTRIBUTE_LABEL, None);
+        let action = section.item_attribute_value(0, gio::MENU_ATTRIBUTE_ACTION, None);
+        assert_eq!(
+            label.and_then(|v| v.get::<String>()).as_deref(),
+            Some("Quit")
+        );
+        assert_eq!(
+            action.and_then(|v| v.get::<String>()).as_deref(),
+            Some("win.quit")
+        );
+        assert!(ui.window.lookup_action("quit").is_some());
 
         // spec: META-001 — the status bar shows the EXIF notice.
         assert!(!ui.exif.is_visible());

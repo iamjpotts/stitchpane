@@ -59,6 +59,7 @@ impl Editor {
                 Key::Char('s') if mods.shift => Command::SaveAs,
                 Key::Char('s') => Command::Save,
                 Key::Char('e') => Command::Export,
+                Key::Char('q') => Command::Quit,
                 Key::Char('z') if mods.shift => Command::Redo,
                 Key::Char('z') => Command::Undo,
                 Key::Char('y') => Command::Redo,

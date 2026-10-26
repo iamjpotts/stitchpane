@@ -29,6 +29,12 @@ Feature: User interface behavior shared by both UIs
     When I save the project as "p.stitchpane"
     Then there are no unsaved changes
 
+  @UI-013
+  Scenario: Ctrl+Q asks the UI to quit
+    Given I open "a.png"
+    When I press "Ctrl+Q"
+    Then the UI is asked to quit
+
   @UI-003
   Scenario: Zoom with the keyboard
     Given I open "a.png"

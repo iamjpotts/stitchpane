@@ -519,3 +519,23 @@ fn dodge_bar_sets_the_brush() {
     click(&mut app, "Done");
     assert!(app.editor.dodge_tool().is_none());
 }
+
+#[test]
+fn file_menu_quit_asks_to_save() {
+    // spec: UI-013, UI-002
+    let dir = Scratch::new("quit");
+    let a = dir.image("a.png", 40, 30, None);
+    let mut app = app_with(&[&a]);
+    assert!(app.editor.apply(Step::MoveItem {
+        item: ItemId(1),
+        x: 5,
+        y: 5
+    }));
+    click(&mut app, "File");
+    click(&mut app, "Quit  (Ctrl+Q)");
+    assert!(matches!(
+        app.modal,
+        Some(Modal::ConfirmDiscard(dialogs::AfterDiscard::Quit))
+    ));
+    assert_shows(&app, "Discard");
+}

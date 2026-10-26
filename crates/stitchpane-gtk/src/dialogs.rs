@@ -46,6 +46,8 @@ pub(crate) fn run(ui: &Rc<Ui>, command: Command) {
         Command::TransitionProperties(id) => transition(ui, id),
         Command::ExifViewer(item) => exif_viewer(ui, item),
         Command::LocateSource(source) => locate(ui, source),
+        // closing the window offers to save first (UI-002, UI-013)
+        Command::Quit => ui.window.close(),
         other => {
             ui.edit(|e| e.execute(other));
             ui.refresh();

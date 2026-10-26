@@ -211,6 +211,15 @@ pub fn run(app: &mut App, command: Command) -> Task<Message> {
             }
         }
         Command::AddImages => pick(app, Purpose::AddImages, "Add images", true, false),
+        // UI-013: as closing the window does, offer to save first (UI-002)
+        Command::Quit => {
+            if app.editor.needs_save_prompt() {
+                app.modal = Some(Modal::ConfirmDiscard(AfterDiscard::Quit));
+                Task::none()
+            } else {
+                iced::exit()
+            }
+        }
         Command::Save => save_project(app, AfterDiscard::Nothing),
         Command::SaveAs => save_file(
             app,

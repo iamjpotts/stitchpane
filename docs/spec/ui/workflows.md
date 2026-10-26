@@ -104,6 +104,13 @@ so the time to prepare one image limits how far the canvas lags behind the point
 how often the canvas updates. If that number is reached, the system shall keep only the
 newest waiting image and start it when one finishes.
 
+### UI-013: Quit
+Status: Implemented
+
+The main menu shall offer Quit, also Ctrl+Q, as the last item of the menu that holds
+Open and Save. Quitting shall do what closing the window does, offering Save, Discard
+or Cancel first if there are unsaved changes (UI-002).
+
 ## Keyboard shortcuts
 
 | Action | Shortcut |
@@ -111,6 +118,7 @@ newest waiting image and start it when one finishes.
 | Open | Ctrl+O |
 | Save / Save as | Ctrl+S / Ctrl+Shift+S |
 | Export | Ctrl+E |
+| Quit | Ctrl+Q |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y |
 | Crop tool | C |
 | Smear tool | S |
@@ -125,6 +133,8 @@ newest waiting image and start it when one finishes.
 
 - The GTK build uses a header bar with a main menu (File items, Edit, View, Image
   submenus), GTK file choosers and dialogs.
+- Quit (UI-013) is the last item of the GTK main menu, after a separator (GNOME
+  convention), and the last item of the iced File menu.
 - The iced build has File, Edit, View and Image menus in its header, draws its dialogs
   inside the window, and uses the desktop file chooser through the XDG portal.
 - iced does not report where files are dropped, so in the iced build dropped files are

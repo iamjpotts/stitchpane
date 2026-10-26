@@ -240,6 +240,11 @@ fn asked_transition(world: &mut World) {
     ));
 }
 
+#[then("the UI is asked to quit")]
+fn asked_quit(world: &mut World) {
+    assert_eq!(world.ui_request, Some(Command::Quit));
+}
+
 #[then("the UI is asked for the feather dialog")]
 fn asked_feather(world: &mut World) {
     assert!(matches!(world.ui_request, Some(Command::Feather(_))));

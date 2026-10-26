@@ -104,6 +104,8 @@ pub enum Command {
     TransitionProperties(TransitionId),
     ExifViewer(Option<ItemId>),
     LocateSource(SourceId),
+    /// Close the window, asking about unsaved changes first (UI-013).
+    Quit,
     // Done by the editor.
     Undo,
     Redo,
@@ -150,6 +152,7 @@ impl Command {
                 | Command::TransitionProperties(_)
                 | Command::ExifViewer(_)
                 | Command::LocateSource(_)
+                | Command::Quit
         )
     }
 }
