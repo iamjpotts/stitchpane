@@ -29,6 +29,18 @@ Feature: User interface behavior shared by both UIs
     When I save the project as "p.stitchpane"
     Then there are no unsaved changes
 
+  @UI-002
+  Scenario Outline: Adding images to the empty canvas is an unsaved change
+    When I <add>
+    Then there are unsaved changes
+    And the title is "*Untitled — Stitch Pane"
+    And the project has 1 images
+
+    Examples:
+      | add                                   |
+      | add "a.png"                           |
+      | drop "a.png" on the canvas at 10, 10 |
+
   @UI-013
   Scenario: Ctrl+Q asks the UI to quit
     Given I open "a.png"

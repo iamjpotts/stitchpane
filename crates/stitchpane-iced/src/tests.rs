@@ -539,3 +539,17 @@ fn file_menu_quit_asks_to_save() {
     ));
     assert_shows(&app, "Discard");
 }
+
+#[test]
+fn quitting_after_adding_to_the_empty_canvas_asks_to_save() {
+    // spec: UI-002, UI-013
+    let dir = Scratch::new("addquit");
+    let a = dir.image("a.png", 40, 30, None);
+    let mut app = app_with(&[]);
+    let _ = app.update(Message::Picked(dialogs::Purpose::AddImages, vec![a]));
+    let _ = app.update(Message::Command(Command::Quit));
+    assert!(matches!(
+        app.modal,
+        Some(Modal::ConfirmDiscard(dialogs::AfterDiscard::Quit))
+    ));
+}

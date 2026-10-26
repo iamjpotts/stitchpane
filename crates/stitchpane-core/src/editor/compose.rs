@@ -203,6 +203,17 @@ impl Editor {
         paths: &[PathBuf],
         choice: Option<CanvasChoice>,
     ) -> Result<(), String> {
+        self.start_project(paths, choice, true)
+    }
+
+    /// See [`Editor::new_composition`]. A project that is not `saved` starts with unsaved
+    /// changes, as images added to an empty canvas do (UI-002).
+    fn start_project(
+        &mut self,
+        paths: &[PathBuf],
+        choice: Option<CanvasChoice>,
+        saved: bool,
+    ) -> Result<(), String> {
         let paths: Vec<PathBuf> = paths
             .iter()
             .map(|p| std::path::absolute(p).map_err(|e| e.to_string()))
@@ -230,7 +241,9 @@ impl Editor {
                 })
                 .map_err(|e| e.to_string())?;
         }
-        project.mark_saved();
+        if saved {
+            project.mark_saved();
+        }
         self.replace_project(project, None);
         if let Some(path) = paths.last() {
             self.remember_folder(path);
@@ -242,8 +255,11 @@ impl Editor {
     /// drop point (`at`, screen coordinates); otherwise they go to the right of the
     /// existing images on a fitted canvas, or centered on a fixed canvas.
     pub fn add_images(&mut self, paths: &[PathBuf], at: Option<Point>) -> Result<(), String> {
+        // Images added to an empty, untitled canvas start a project as opening them does
+        // (UI-005), but adding them is a change (UI-002).
         if self.is_empty() && self.path.is_none() && !self.project.is_dirty() {
-            return self.open_images(paths);
+            let choice = (paths.len() > 1).then_some(CanvasChoice::SideBySide);
+            return self.start_project(paths, choice, false);
         }
         for path in paths {
             let path = std::path::absolute(path).map_err(|e| e.to_string())?;

@@ -46,7 +46,8 @@ single-image project.
 Status: Implemented
 
 If the user closes a window or opens another project with unsaved changes, then the
-system shall offer Save, Discard, or Cancel.
+system shall offer Save, Discard, or Cancel. Opening an image or project is not a
+change; adding images, including to an empty canvas and by dropping files, is.
 
 ### UI-003: Zoom
 Status: Implemented
