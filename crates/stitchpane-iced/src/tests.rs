@@ -58,7 +58,7 @@ fn app_with(paths: &[&Path]) -> App {
 
 /// Delivers the allocations the headless tests never run, as iced would (UI-011).
 fn present(app: &mut App) {
-    while let Some(id) = app.frames.uploading.as_ref().map(|f| f.handle.id()) {
+    while let Some(id) = uploading_ids(app).first().copied() {
         let _ = app.update(Message::FrameReady(id, None));
     }
 }
@@ -67,8 +67,22 @@ fn shown_id(app: &App) -> Option<ImageId> {
     app.frames.shown().map(|f| f.handle.id())
 }
 
-fn uploading_id(app: &App) -> Option<ImageId> {
-    app.frames.uploading.as_ref().map(|f| f.handle.id())
+/// Frames being uploaded, oldest first.
+fn uploading_ids(app: &App) -> Vec<ImageId> {
+    app.frames
+        .uploading
+        .iter()
+        .map(|(_, f)| f.handle.id())
+        .collect()
+}
+
+fn waiting_id(app: &App) -> Option<ImageId> {
+    app.frames.next.as_ref().map(|f| f.handle.id())
+}
+
+/// Moves the pointer over the canvas, which renders a new frame.
+fn pointer_move(app: &mut App, x: f32) {
+    let _ = app.update(Message::PointerMove(IPoint::new(x, 300.0)));
 }
 
 /// Clicks a widget by its text and feeds the resulting messages to the app.
@@ -393,7 +407,7 @@ fn delete_removes_the_selected_image() {
 }
 
 #[test]
-fn canvas_keeps_the_shown_frame_until_the_next_is_ready() {
+fn canvas_keeps_the_shown_frame_until_a_newer_is_ready() {
     // spec: UI-011
     let dir = Scratch::new("frames");
     let a = dir.image("a.png", 400, 300, None);
@@ -402,29 +416,54 @@ fn canvas_keeps_the_shown_frame_until_the_next_is_ready() {
     let first = shown_id(&app).expect("a frame is shown");
 
     // a new frame uploads while the old one stays on the canvas
-    let _ = app.update(Message::PointerMove(IPoint::new(500.0, 300.0)));
-    let second = uploading_id(&app).expect("a frame is uploading");
+    pointer_move(&mut app, 500.0);
+    pointer_move(&mut app, 510.0);
+    let [older, newer] = uploading_ids(&app)[..] else {
+        panic!("two frames are uploading");
+    };
     assert_eq!(shown_id(&app), Some(first));
 
-    // frames rendered meanwhile wait; only the newest is kept
-    let _ = app.update(Message::PointerMove(IPoint::new(510.0, 300.0)));
-    let _ = app.update(Message::PointerMove(IPoint::new(520.0, 300.0)));
-    let newest = app.frames.next.as_ref().expect("a frame waits").handle.id();
-    assert_eq!(uploading_id(&app), Some(second));
-
-    // a stale report changes nothing
+    // a report for a frame that is not uploading changes nothing
     let _ = app.update(Message::FrameReady(first, None));
-    assert_eq!(
-        (shown_id(&app), uploading_id(&app)),
-        (Some(first), Some(second))
-    );
+    assert_eq!(shown_id(&app), Some(first));
+    assert_eq!(uploading_ids(&app), [older, newer]);
 
-    let _ = app.update(Message::FrameReady(second, None));
-    assert_eq!(shown_id(&app), Some(second));
-    assert_eq!(uploading_id(&app), Some(newest));
-    assert!(app.frames.next.is_none());
+    // the newer frame is shown even if it finishes first; the older is then skipped
+    let _ = app.update(Message::FrameReady(newer, None));
+    assert_eq!(shown_id(&app), Some(newer));
+    let _ = app.update(Message::FrameReady(older, None));
+    assert_eq!(shown_id(&app), Some(newer));
+    assert!(uploading_ids(&app).is_empty());
+}
 
-    let _ = app.update(Message::FrameReady(newest, None));
+#[test]
+fn canvas_uploads_several_frames_at_once() {
+    // spec: UI-012
+    let dir = Scratch::new("uploads");
+    let a = dir.image("a.png", 400, 300, None);
+    let mut app = app_with(&[&a]);
+    present(&mut app);
+
+    // each new frame starts uploading without waiting, up to the limit
+    for i in 0..MAX_UPLOADS {
+        pointer_move(&mut app, 500.0 + i as f32);
+        assert_eq!(uploading_ids(&app).len(), i + 1);
+    }
+    let first = uploading_ids(&app)[0];
+
+    // beyond the limit only the newest frame waits
+    pointer_move(&mut app, 600.0);
+    pointer_move(&mut app, 610.0);
+    let newest = waiting_id(&app).expect("a frame waits");
+    assert_eq!(uploading_ids(&app).len(), MAX_UPLOADS);
+
+    // when an upload finishes, the waiting frame starts
+    let _ = app.update(Message::FrameReady(first, None));
+    assert_eq!(shown_id(&app), Some(first));
+    assert_eq!(uploading_ids(&app).last(), Some(&newest));
+    assert_eq!(uploading_ids(&app).len(), MAX_UPLOADS);
+    assert!(waiting_id(&app).is_none());
+
+    present(&mut app);
     assert_eq!(shown_id(&app), Some(newest));
-    assert!(app.frames.uploading.is_none());
 }

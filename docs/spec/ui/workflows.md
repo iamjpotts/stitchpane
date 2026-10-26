@@ -91,10 +91,18 @@ as the View menu.
 Status: Implemented
 
 When the canvas image changes, the system shall keep showing the previous canvas image
-until the new one is ready to draw, so the canvas never shows an empty or partly drawn
-frame. If newer canvas images are produced while one is being prepared, the system
-shall show the one being prepared when it is ready and then the newest, skipping those
-in between.
+until a newer one is ready to draw, so the canvas never shows an empty or partly drawn
+frame. When a canvas image becomes ready, the system shall show it only if it is newer
+than the one shown; an older image is skipped.
+
+### UI-012: The canvas keeps pace while it changes
+Status: Implemented
+
+While earlier canvas images are still being prepared, the system shall start preparing
+each new canvas image without waiting for them, up to a small fixed number at a time,
+so the time to prepare one image limits how far the canvas lags behind the pointer, not
+how often the canvas updates. If that number is reached, the system shall keep only the
+newest waiting image and start it when one finishes.
 
 ## Keyboard shortcuts
 
@@ -124,5 +132,6 @@ in between.
   resamples at full quality before writing.
 - The iced renderer uploads large images to the GPU in the background and draws nothing
   for an image until its upload finishes, so the iced build swaps in a new canvas image
-  only once iced reports it allocated (UI-011). The GTK build draws each canvas image
-  synchronously.
+  only once iced reports it allocated (UI-011), and keeps several uploads in flight
+  (UI-012). The GTK build draws each canvas image synchronously. See
+  `decisions/0007-iced-canvas-uploads.md`.

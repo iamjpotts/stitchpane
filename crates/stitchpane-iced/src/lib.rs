@@ -3,6 +3,7 @@
 
 mod dialogs;
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -716,44 +717,63 @@ struct CanvasFrame {
     labels: Vec<(Point, String)>,
 }
 
-/// Canvas frames on their way to the screen (UI-011). iced draws nothing for a large image
-/// until it has uploaded it in the background, so a new frame replaces the shown one only
-/// once iced has allocated it. One frame uploads at a time; frames rendered meanwhile
-/// replace each other in `next`, so the newest is uploaded after the current upload.
+/// Canvas frames on their way to the screen (UI-011, UI-012). iced draws nothing for a
+/// large image until it has uploaded it in the background, so a new frame replaces the
+/// shown one only once iced has allocated it. Each upload waits for about three display
+/// refreshes in iced (`decisions/0007-iced-canvas-uploads.md`), so up to `MAX_UPLOADS`
+/// run at once; beyond that, frames replace each other in `next` until an upload ends.
 #[derive(Default)]
 struct Frames {
-    /// The frame on the canvas, with the allocation that keeps it uploaded.
-    shown: Option<(CanvasFrame, Option<Allocation>)>,
-    uploading: Option<CanvasFrame>,
+    /// The frame on the canvas, its sequence number, and the allocation that keeps it
+    /// uploaded.
+    shown: Option<(u64, CanvasFrame, Option<Allocation>)>,
+    /// Frames being uploaded with their sequence numbers, oldest first. A frame stays
+    /// here until iced reports it, even once a newer frame is shown, so the count matches
+    /// iced's uploads.
+    uploading: VecDeque<(u64, CanvasFrame)>,
     next: Option<CanvasFrame>,
+    /// Sequence number of the next submitted frame; a larger number is a newer frame.
+    sequence: u64,
 }
+
+/// Uploads in flight at once (UI-012); three cover iced's three-refresh upload delay.
+const MAX_UPLOADS: usize = 3;
 
 impl Frames {
     /// Queues a newly rendered frame; returns its handle when it should be uploaded now.
     fn submit(&mut self, frame: CanvasFrame) -> Option<image::Handle> {
-        if self.uploading.is_some() {
+        if self.uploading.len() >= MAX_UPLOADS {
             self.next = Some(frame);
             return None;
         }
         let handle = frame.handle.clone();
-        self.uploading = Some(frame);
+        self.uploading.push_back((self.sequence, frame));
+        self.sequence = self.sequence.saturating_add(1);
         Some(handle)
     }
 
-    /// Shows the uploaded frame `id`; returns the handle of the next frame to upload.
-    /// Without an allocation the frame is shown anyway, so a failed upload cannot leave
-    /// the canvas stuck on an old frame.
+    /// Shows the uploaded frame `id` unless a newer frame is shown; returns the handle of
+    /// the waiting frame to upload next. Without an allocation the frame is shown anyway,
+    /// so a failed upload cannot leave the canvas stuck on an old frame.
     fn ready(&mut self, id: ImageId, allocation: Option<Allocation>) -> Option<image::Handle> {
-        if self.uploading.as_ref().map(|f| f.handle.id()) != Some(id) {
-            return None;
+        let index = self
+            .uploading
+            .iter()
+            .position(|(_, frame)| frame.handle.id() == id)?;
+        let (sequence, frame) = self.uploading.remove(index)?;
+        if self
+            .shown
+            .as_ref()
+            .is_none_or(|(shown, ..)| sequence > *shown)
+        {
+            self.shown = Some((sequence, frame, allocation));
         }
-        self.shown = self.uploading.take().map(|frame| (frame, allocation));
         let next = self.next.take()?;
         self.submit(next)
     }
 
     fn shown(&self) -> Option<&CanvasFrame> {
-        self.shown.as_ref().map(|(frame, _)| frame)
+        self.shown.as_ref().map(|(_, frame, _)| frame)
     }
 }
 
