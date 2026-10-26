@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 publish = true
 repository = "https://github.com/iamjpotts/stitchpane"
 rust-version = "1.99.1"
-version = "0.1.1"
+version = "0.1.2"
 
 [workspace.lints.rust]
 warnings = "deny"

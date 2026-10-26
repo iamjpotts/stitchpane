@@ -28,7 +28,7 @@
 
 # Verifying the application
 
-Run `just verify`. It runs formatting, `cargo deny`, checks and clippy (for both the GTK and iced builds, warnings are errors), `just spec-check`, and tests (including cucumber features).
+Run `just verify`. It runs formatting, `just index-refresh` (so `cargo deny` sees recent yanks), `cargo deny`, checks and clippy (for both the GTK and iced builds, warnings are errors), `just spec-check`, and tests (including cucumber features).
 
 Building needs the `libgtk-4-dev`, `libheif-dev` and `jq` packages (see README.md). The GTK UI test needs a display and skips itself without one.
 

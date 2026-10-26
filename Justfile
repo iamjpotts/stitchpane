@@ -24,6 +24,10 @@ clippy:
 deny:
     @cargo deny check
 
+# refresh cargo's crates.io index cache, which `cargo deny` reads for yanks but never updates
+index-refresh:
+    @cargo update --dry-run --quiet
+
 fmt:
     @cargo +nightly fmt
 
@@ -37,4 +41,4 @@ spec-check:
 t:
     cargo test --workspace
 
-verify: fmt-check deny check clippy spec-check t
+verify: fmt-check index-refresh deny check clippy spec-check t

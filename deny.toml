@@ -11,6 +11,8 @@ ignore = [
     "RUSTSEC-2026-0372", # zvariant_derive merged into zbus; iced -> iced_winit -> mundy -> zbus
 ]
 version = 2
+# a yanked crate fails the check; `just index-refresh` keeps the index cache current
+yanked = "deny"
 
 [licenses]
 allow = [
