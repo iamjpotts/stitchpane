@@ -1,10 +1,11 @@
-//! The smear tool (SMEAR-001 to SMEAR-005). Strokes are drawn in canvas coordinates and
-//! recorded in the item's source pixels, so they stay with the image.
+//! The smear tool (SMEAR-001 to SMEAR-005), and the strokes of both brush tools (smear
+//! and dodge and burn, DODGE-004). Strokes are drawn in canvas coordinates and recorded
+//! in the item's source pixels, so they stay with the image.
 
 use super::crop::ItemMapping;
 use super::{Editor, Selection};
 use crate::geometry::Point;
-use crate::model::{ItemId, SmearKind, Step, Stroke};
+use crate::model::{ItemId, Step, Stroke, StrokeKind, ToneRange};
 use crate::panic_free::Clamped;
 
 /// Default strength (SMEAR-003).
@@ -13,7 +14,7 @@ pub const DEFAULT_STRENGTH: f64 = 0.5;
 /// Brush settings, kept for the session (SMEAR-003).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct SmearSettings {
-    pub(super) kind: SmearKind,
+    pub(super) kind: StrokeKind,
     /// Brush diameter in canvas pixels; `None` until the user sets one.
     pub(super) size: Option<f64>,
     pub(super) strength: f64,
@@ -22,7 +23,7 @@ pub(super) struct SmearSettings {
 impl Default for SmearSettings {
     fn default() -> Self {
         Self {
-            kind: SmearKind::default(),
+            kind: StrokeKind::default(),
             size: None,
             strength: DEFAULT_STRENGTH,
         }
@@ -33,7 +34,7 @@ impl Default for SmearSettings {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SmearTool {
     pub item: ItemId,
-    pub kind: SmearKind,
+    pub kind: StrokeKind,
     /// Brush diameter in canvas pixels.
     pub size: f64,
     /// `0.01..=1`.
@@ -46,7 +47,7 @@ impl Editor {
         if self.project.state().item(item).is_none() {
             return false;
         }
-        self.crop = None;
+        self.leave_tools();
         self.smear = Some(item);
         self.selection = Selection::Item(item);
         true
@@ -67,7 +68,7 @@ impl Editor {
         })
     }
 
-    pub fn set_smear_kind(&mut self, kind: SmearKind) {
+    pub fn set_smear_kind(&mut self, kind: StrokeKind) {
         self.smear_settings.kind = kind;
     }
 
@@ -85,11 +86,30 @@ impl Editor {
         }
     }
 
+    /// Whether a brush tool (smear, or dodge and burn) is active.
+    pub(super) fn brush_active(&self) -> bool {
+        self.smear.is_some() || self.dodge.is_some()
+    }
+
+    /// The active brush tool's item, kind, diameter in canvas pixels, strength and range.
+    fn brush(&self) -> Option<(ItemId, StrokeKind, f64, f64, Option<ToneRange>)> {
+        if let Some(t) = self.dodge_tool() {
+            return Some((t.item, t.kind, t.size, t.strength, Some(t.range)));
+        }
+        let t = self.smear_tool()?;
+        Some((t.item, t.kind, t.size, t.strength, None))
+    }
+
+    /// Brush diameter in canvas pixels of the active brush tool, for its outline.
+    pub(super) fn brush_size(&self) -> Option<f64> {
+        self.brush().map(|(_, _, size, ..)| size)
+    }
+
     /// The stroke for canvas points drawn with the current brush, in the item's source
-    /// pixels (SMEAR-005).
+    /// pixels (SMEAR-005, DODGE-004).
     pub(super) fn stroke_from(&self, points: &[Point]) -> Option<(ItemId, Stroke)> {
-        let tool = self.smear_tool()?;
-        let item = *self.project.state().item(tool.item)?;
+        let (id, kind, size, strength, range) = self.brush()?;
+        let item = *self.project.state().item(id)?;
         let mapping = ItemMapping::new(item);
         let scale = (f64::from(item.width) / f64::from(item.crop.width)
             + f64::from(item.height) / f64::from(item.crop.height))
@@ -103,19 +123,23 @@ impl Editor {
             })
             .collect();
         Some((
-            tool.item,
+            id,
             Stroke {
-                kind: tool.kind,
-                size: tool.size / scale,
-                strength: tool.strength,
+                kind,
+                size: size / scale,
+                strength,
                 points,
+                range,
             },
         ))
     }
 
-    /// Records a finished stroke (SMEAR-004).
+    /// Records a finished stroke (SMEAR-004, DODGE-004).
     pub(super) fn finish_stroke(&mut self, points: &[Point]) -> bool {
         match self.stroke_from(points) {
+            Some((item, stroke)) if stroke.range.is_some() => {
+                self.record(Step::DodgeBurn { item, stroke })
+            }
             Some((item, stroke)) => self.record(Step::Smear { item, stroke }),
             None => false,
         }

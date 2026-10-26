@@ -19,7 +19,7 @@ use stitchpane_core::editor::{
     AspectChoice, Button as PointerButton, Command, Cursor, Editor, Key, KeyOutcome, Modifiers,
 };
 use stitchpane_core::geometry::{PixelRect, Point};
-use stitchpane_core::model::SmearKind;
+use stitchpane_core::model::{Light, StrokeKind, ToneRange};
 use stitchpane_core::{APP_ID, APP_NAME};
 
 pub fn run() -> ExitCode {
@@ -58,6 +58,27 @@ struct SmearBar {
     strength: SpinButton,
 }
 
+/// Light tool controls (LIGHT-001 to LIGHT-004).
+struct LightBar {
+    container: GBox,
+    exposure: SpinButton,
+    shadows: SpinButton,
+    highlights: SpinButton,
+    radius: SpinButton,
+    black: SpinButton,
+    midtones: SpinButton,
+    white: SpinButton,
+}
+
+/// Dodge and burn tool controls (DODGE-001 to DODGE-003).
+struct DodgeBar {
+    container: GBox,
+    kind: DropDown,
+    range: DropDown,
+    size: SpinButton,
+    strength: SpinButton,
+}
+
 pub(crate) struct Ui {
     editor: RefCell<Editor>,
     window: ApplicationWindow,
@@ -73,6 +94,8 @@ pub(crate) struct Ui {
     hint: Label,
     crop: CropBar,
     smear: SmearBar,
+    light: LightBar,
+    dodge: DodgeBar,
     zoom: MenuButton,
     /// Last pointer position over the canvas.
     pointer: Cell<Point>,
@@ -138,6 +161,31 @@ fn spin(max: f64) -> SpinButton {
     let s = SpinButton::with_range(0.0, max, 1.0);
     s.set_width_chars(6);
     s
+}
+
+/// A spin button from `min` to `max` in steps of `step`, showing `digits` decimals.
+fn spin_range(min: f64, max: f64, step: f64, digits: u32) -> SpinButton {
+    let s = SpinButton::with_range(min, max, step);
+    s.set_digits(digits);
+    s.set_width_chars(5);
+    s
+}
+
+/// A tool bar row with the margins the crop and smear bars use.
+fn tool_bar() -> GBox {
+    let bar = GBox::new(GOrientation::Horizontal, 6);
+    bar.set_margin_start(6);
+    bar.set_margin_end(6);
+    bar.set_margin_top(6);
+    bar.set_margin_bottom(6);
+    bar
+}
+
+/// A horizontal space that takes up the rest of a tool bar.
+fn bar_spacer() -> GBox {
+    let spacer = GBox::new(GOrientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    spacer
 }
 
 impl Ui {
@@ -226,7 +274,7 @@ impl Ui {
         crop.container.append(&cancel_crop);
         crop.container.append(&apply_crop);
 
-        let kinds: Vec<&str> = SmearKind::ALL.iter().map(|k| k.label()).collect();
+        let kinds: Vec<&str> = StrokeKind::SMEAR.iter().map(|k| k.label()).collect();
         let smear = SmearBar {
             container: GBox::new(GOrientation::Horizontal, 6),
             kind: DropDown::from_strings(&kinds),
@@ -255,6 +303,70 @@ impl Ui {
         let smear_done = Button::with_label("Done");
         smear_done.add_css_class("suggested-action");
         smear.container.append(&smear_done);
+
+        // Two rows so the bar fits the window: exposure and shadows and highlights, then
+        // levels and the buttons.
+        let light = LightBar {
+            container: GBox::new(GOrientation::Vertical, 0),
+            exposure: spin_range(-5.0, 5.0, 0.1, 1),
+            shadows: spin_range(0.0, 100.0, 1.0, 0),
+            highlights: spin_range(0.0, 100.0, 1.0, 0),
+            radius: spin_range(1.0, 100_000.0, 1.0, 0),
+            black: spin_range(0.0, 254.0, 1.0, 0),
+            midtones: spin_range(0.1, 9.99, 0.01, 2),
+            white: spin_range(1.0, 255.0, 1.0, 0),
+        };
+        let light_rows = [tool_bar(), tool_bar()];
+        let [first, second] = &light_rows;
+        first.set_margin_bottom(0);
+        first.append(&Label::new(Some("Light")));
+        second.append(&Label::new(Some("Levels")));
+        for (row, label, widget) in [
+            (first, "Exposure", &light.exposure),
+            (first, "Shadows %", &light.shadows),
+            (first, "Highlights %", &light.highlights),
+            (first, "Radius", &light.radius),
+            (second, "Black", &light.black),
+            (second, "Midtones", &light.midtones),
+            (second, "White", &light.white),
+        ] {
+            row.append(&Label::new(Some(label)));
+            row.append(widget);
+        }
+        second.append(&bar_spacer());
+        let reset_light = Button::with_label("Reset");
+        let cancel_light = Button::with_label("Cancel");
+        let apply_light = Button::with_label("Apply");
+        apply_light.add_css_class("suggested-action");
+        second.append(&reset_light);
+        second.append(&cancel_light);
+        second.append(&apply_light);
+        light.container.append(first);
+        light.container.append(second);
+
+        let kinds: Vec<&str> = StrokeKind::DODGE_BURN.iter().map(|k| k.label()).collect();
+        let ranges: Vec<&str> = ToneRange::ALL.iter().map(|r| r.label()).collect();
+        let dodge = DodgeBar {
+            container: tool_bar(),
+            kind: DropDown::from_strings(&kinds),
+            range: DropDown::from_strings(&ranges),
+            size: spin(5000.0),
+            strength: spin(100.0),
+        };
+        dodge.size.set_range(1.0, 5000.0);
+        dodge.strength.set_range(1.0, 100.0);
+        dodge.container.append(&Label::new(Some("Dodge and burn")));
+        dodge.container.append(&dodge.kind);
+        dodge.container.append(&Label::new(Some("Range")));
+        dodge.container.append(&dodge.range);
+        dodge.container.append(&Label::new(Some("Size")));
+        dodge.container.append(&dodge.size);
+        dodge.container.append(&Label::new(Some("Strength %")));
+        dodge.container.append(&dodge.strength);
+        dodge.container.append(&bar_spacer());
+        let dodge_done = Button::with_label("Done");
+        dodge_done.add_css_class("suggested-action");
+        dodge.container.append(&dodge_done);
 
         let status_bar = GBox::new(GOrientation::Horizontal, 12);
         status_bar.set_margin_start(8);
@@ -295,6 +407,8 @@ impl Ui {
         let layout = GBox::new(GOrientation::Vertical, 0);
         layout.append(&crop.container);
         layout.append(&smear.container);
+        layout.append(&light.container);
+        layout.append(&dodge.container);
         layout.append(&overlay);
         layout.append(&status_bar);
         window.set_child(Some(&layout));
@@ -316,6 +430,8 @@ impl Ui {
             hint,
             crop,
             smear,
+            light,
+            dodge,
             zoom,
             pointer: Cell::new(Point::default()),
             drag_start: Cell::new(Point::default()),
@@ -335,6 +451,8 @@ impl Ui {
         ui.connect_canvas();
         ui.connect_crop_bar(&apply_crop, &cancel_crop);
         ui.connect_smear_bar(&smear_done);
+        ui.connect_light_bar(&reset_light, &cancel_light, &apply_light);
+        ui.connect_dodge_bar(&dodge_done);
 
         let weak = Rc::downgrade(&ui);
         let on = move |command: Command| {
@@ -653,7 +771,7 @@ impl Ui {
             }
             let s = &ui.smear;
             ui.edit(|editor| {
-                if let Some(kind) = SmearKind::ALL.get(s.kind.selected() as usize) {
+                if let Some(kind) = StrokeKind::SMEAR.get(s.kind.selected() as usize) {
                     editor.set_smear_kind(*kind);
                 }
                 editor.set_smear_size(s.size.value());
@@ -681,10 +799,129 @@ impl Ui {
         self.smear.container.set_visible(tool.is_some());
         let Some(tool) = tool else { return };
         self.updating.set(true);
-        let index = SmearKind::ALL.iter().position(|k| *k == tool.kind);
+        let index = StrokeKind::SMEAR.iter().position(|k| *k == tool.kind);
         self.smear.kind.set_selected(index.unwrap_or(0) as u32);
         self.smear.size.set_value(tool.size);
         self.smear
+            .strength
+            .set_value((tool.strength * 100.0).round());
+        self.updating.set(false);
+    }
+
+    fn connect_light_bar(self: &Rc<Self>, reset: &Button, cancel: &Button, apply: &Button) {
+        let b = &self.light;
+        for spin in [
+            &b.exposure,
+            &b.shadows,
+            &b.highlights,
+            &b.radius,
+            &b.black,
+            &b.midtones,
+            &b.white,
+        ] {
+            let weak = Rc::downgrade(self);
+            spin.connect_value_changed(move |_| {
+                let Some(ui) = weak.upgrade() else { return };
+                if ui.updating.get() {
+                    return;
+                }
+                let b = &ui.light;
+                let light = Light {
+                    exposure: b.exposure.value(),
+                    shadows: b.shadows.value() / 100.0,
+                    highlights: b.highlights.value() / 100.0,
+                    radius: b.radius.value(),
+                    black: b.black.value(),
+                    white: b.white.value(),
+                    midtones: b.midtones.value(),
+                };
+                ui.edit(|e| e.set_light(light));
+                ui.refresh();
+            });
+        }
+        for (button, command) in [
+            (reset, Command::ResetLight),
+            (cancel, Command::CancelLight),
+            (apply, Command::ApplyLight),
+        ] {
+            let weak = Rc::downgrade(self);
+            button.connect_clicked(move |_| {
+                if let Some(ui) = weak.upgrade() {
+                    ui.command(command.clone());
+                }
+            });
+        }
+    }
+
+    fn refresh_light_bar(&self) {
+        let Some(tool) = self.read(|e| e.light_tool()) else {
+            return;
+        };
+        self.light.container.set_visible(tool.is_some());
+        let Some(tool) = tool else { return };
+        let (b, l) = (&self.light, tool.light);
+        self.updating.set(true);
+        // the white point stays above the black point (LIGHT-004)
+        b.black.set_range(0.0, (l.white - 1.0).max(0.0));
+        b.white.set_range((l.black + 1.0).min(255.0), 255.0);
+        b.exposure.set_value(l.exposure);
+        b.shadows.set_value((l.shadows * 100.0).round());
+        b.highlights.set_value((l.highlights * 100.0).round());
+        b.radius.set_value(l.radius);
+        b.black.set_value(l.black);
+        b.midtones.set_value(l.midtones);
+        b.white.set_value(l.white);
+        self.updating.set(false);
+    }
+
+    fn connect_dodge_bar(self: &Rc<Self>, done: &Button) {
+        let weak = Rc::downgrade(self);
+        let apply = move || {
+            let Some(ui) = weak.upgrade() else { return };
+            if ui.updating.get() {
+                return;
+            }
+            let d = &ui.dodge;
+            ui.edit(|editor| {
+                if let Some(kind) = StrokeKind::DODGE_BURN.get(d.kind.selected() as usize) {
+                    editor.set_dodge_kind(*kind);
+                }
+                if let Some(range) = ToneRange::ALL.get(d.range.selected() as usize) {
+                    editor.set_dodge_range(*range);
+                }
+                editor.set_dodge_size(d.size.value());
+                editor.set_dodge_strength(d.strength.value() / 100.0);
+            });
+            ui.canvas.queue_draw();
+        };
+        let f = apply.clone();
+        self.dodge.kind.connect_selected_notify(move |_| f());
+        let f = apply.clone();
+        self.dodge.range.connect_selected_notify(move |_| f());
+        let f = apply.clone();
+        self.dodge.size.connect_value_changed(move |_| f());
+        self.dodge.strength.connect_value_changed(move |_| apply());
+        let weak = Rc::downgrade(self);
+        done.connect_clicked(move |_| {
+            if let Some(ui) = weak.upgrade() {
+                ui.command(Command::EndDodgeBurn);
+            }
+        });
+    }
+
+    fn refresh_dodge_bar(&self) {
+        let Some(tool) = self.read(|e| e.dodge_tool()) else {
+            return;
+        };
+        self.dodge.container.set_visible(tool.is_some());
+        let Some(tool) = tool else { return };
+        self.updating.set(true);
+        let kind = StrokeKind::DODGE_BURN.iter().position(|k| *k == tool.kind);
+        self.dodge.kind.set_selected(kind.unwrap_or(0) as u32);
+        let range = ToneRange::ALL.iter().position(|r| *r == tool.range);
+        self.dodge.range.set_selected(range.unwrap_or(0) as u32);
+        self.dodge.size.set_value(tool.size);
+        self.dodge
             .strength
             .set_value((tool.strength * 100.0).round());
         self.updating.set(false);
@@ -952,6 +1189,8 @@ impl Ui {
         });
         self.refresh_crop_bar();
         self.refresh_smear_bar();
+        self.refresh_light_bar();
+        self.refresh_dodge_bar();
         let model = self.menu_model();
         self.menu
             .set_popover(Some(&PopoverMenu::from_model(Some(&model))));
@@ -1072,6 +1311,44 @@ mod tests {
         assert_eq!(ui.editor.borrow().smear_tool().map(|t| t.size), Some(12.0));
         ui.command(Command::EndSmear);
         assert!(!ui.smear.container.is_visible());
+
+        // spec: LIGHT-001 — the light bar edits the settings and Apply records them.
+        ui.command(Command::AdjustLight(ItemId(1)));
+        assert!(ui.light.container.is_visible());
+        assert_eq!(ui.light.white.value(), 255.0);
+        ui.light.exposure.set_value(1.0);
+        assert_eq!(
+            ui.editor.borrow().light_tool().map(|t| t.light.exposure),
+            Some(1.0)
+        );
+        ui.light.black.set_value(30.0);
+        assert_eq!(ui.light.white.adjustment().lower(), 31.0);
+        ui.command(Command::ApplyLight);
+        assert!(!ui.light.container.is_visible());
+        assert_eq!(
+            ui.editor
+                .borrow()
+                .project()
+                .state()
+                .item(ItemId(1))
+                .and_then(|i| i.light)
+                .map(|l| (l.exposure, l.black)),
+            Some((1.0, 30.0))
+        );
+
+        // spec: DODGE-001 — the dodge and burn bar shows the brush and Done leaves the tool.
+        ui.command(Command::DodgeBurn(ItemId(1)));
+        assert!(ui.dodge.container.is_visible());
+        assert_eq!(ui.dodge.strength.value(), 50.0);
+        ui.dodge.range.set_selected(0);
+        ui.dodge.size.set_value(9.0);
+        let tool = ui.editor.borrow().dodge_tool();
+        assert_eq!(
+            tool.map(|t| (t.size, t.range)),
+            Some((9.0, ToneRange::Shadows))
+        );
+        ui.command(Command::EndDodgeBurn);
+        assert!(!ui.dodge.container.is_visible());
 
         // spec: META-001 — the status bar shows the EXIF notice.
         assert!(!ui.exif.is_visible());

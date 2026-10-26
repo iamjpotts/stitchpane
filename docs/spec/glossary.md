@@ -33,6 +33,9 @@ edge or center line. See PLACE-006.
 **Step** — One recorded edit (for example "crop item", "move item"). A project is
 replayed by applying its steps in order. Each completed user action produces one step.
 
+**Stop (EV)** — A doubling or halving of light. Exposure and dodge and burn are
+measured in stops. See `product/retouch.md`.
+
 **EXIF** — Metadata embedded in an image by the camera or editor (camera model, date,
 exposure, location, orientation, ...). See `product/metadata.md`.
 

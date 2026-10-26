@@ -5,7 +5,9 @@
 
 mod compose;
 mod crop;
+mod dodge;
 mod keys;
+mod light;
 mod overlay;
 mod pointer;
 mod smear;
@@ -16,7 +18,9 @@ use std::path::{Path, PathBuf};
 
 pub use compose::{CanvasChoice, Preset, PrintUnit, pixels_for_print_size, proportional};
 pub use crop::{AspectChoice, CropTool};
+pub use dodge::DodgeTool;
 pub use keys::{Key, KeyOutcome, Modifiers};
+pub use light::LightTool;
 pub use pointer::{Button, Cursor};
 pub use smear::SmearTool;
 use view::View;
@@ -112,6 +116,12 @@ pub enum Command {
     CancelCrop,
     Smear(ItemId),
     EndSmear,
+    AdjustLight(ItemId),
+    ApplyLight,
+    CancelLight,
+    ResetLight,
+    DodgeBurn(ItemId),
+    EndDodgeBurn,
     RemoveItem(ItemId),
     ToggleSnapping,
     ZOrder(ItemId, ZOrder),
@@ -198,6 +208,11 @@ pub struct Editor {
     /// The item the smear tool is active on (SMEAR-001).
     smear: Option<ItemId>,
     smear_settings: smear::SmearSettings,
+    /// The item the dodge and burn tool is active on (DODGE-001).
+    dodge: Option<ItemId>,
+    dodge_settings: dodge::DodgeSettings,
+    /// The light tool and the settings being edited (LIGHT-001).
+    light: Option<LightTool>,
     /// Last pointer position over the canvas, for the brush outline.
     hover: Option<crate::geometry::Point>,
     gesture: Option<pointer::Gesture>,
@@ -232,6 +247,9 @@ impl Editor {
             crop: None,
             smear: None,
             smear_settings: smear::SmearSettings::default(),
+            dodge: None,
+            dodge_settings: dodge::DodgeSettings::default(),
+            light: None,
             hover: None,
             gesture: None,
             pending: None,
@@ -250,11 +268,13 @@ impl Editor {
         let snapping = self.snapping;
         let last_folder = self.last_folder.take();
         let smear_settings = self.smear_settings;
+        let dodge_settings = self.dodge_settings;
         let background = self.renderer.background();
         *self = Self::with_project(project, path);
         self.snapping = snapping;
         self.last_folder = last_folder;
         self.smear_settings = smear_settings;
+        self.dodge_settings = dodge_settings;
         self.renderer.set_background(background);
         self.set_viewport(viewport.0, viewport.1);
     }
@@ -354,7 +374,8 @@ impl Editor {
 
     /// The state shown on screen: the project with any in-progress gesture or keyboard
     /// adjustment applied. While cropping, the item shows its whole source on top of the
-    /// other items (CROP-005).
+    /// other items (CROP-005); while adjusting light, it shows the settings being edited
+    /// (LIGHT-001).
     pub fn display_state(&self) -> Cow<'_, ProjectState> {
         let preview = self
             .gesture
@@ -380,7 +401,21 @@ impl Editor {
                 items.push(crop::with_crop(&item, tool.limits));
             }
         }
+        if let Some(tool) = &self.light
+            && let Some(item) = state.to_mut().items.iter_mut().find(|i| i.id == tool.item)
+        {
+            item.light = Some(tool.light);
+        }
         state
+    }
+
+    /// Leaves the crop, smear, dodge and burn, and light tools; only one is active at a
+    /// time, and a light tool left this way is cancelled.
+    fn leave_tools(&mut self) {
+        self.crop = None;
+        self.smear = None;
+        self.dodge = None;
+        self.light = None;
     }
 
     /// Records a step from a dialog or other UI action. Returns false (and sets the
@@ -446,6 +481,15 @@ impl Editor {
         if self.smear.is_some_and(|item| state.item(item).is_none()) {
             self.smear = None;
         }
+        if self.dodge.is_some_and(|item| state.item(item).is_none()) {
+            self.dodge = None;
+        }
+        if self
+            .light
+            .is_some_and(|tool| state.item(tool.item).is_none())
+        {
+            self.light = None;
+        }
         if self.view.fit {
             self.fit_view();
         }
@@ -493,12 +537,24 @@ impl Editor {
                 true
             }
             Command::Crop(item) => {
-                self.smear = None;
+                self.leave_tools();
                 self.start_crop(item)
             }
             Command::Smear(item) => self.start_smear(item),
             Command::EndSmear => {
                 self.smear = None;
+                true
+            }
+            Command::AdjustLight(item) => self.start_light(item),
+            Command::ApplyLight => self.apply_light(),
+            Command::CancelLight => {
+                self.light = None;
+                true
+            }
+            Command::ResetLight => self.reset_light(),
+            Command::DodgeBurn(item) => self.start_dodge(item),
+            Command::EndDodgeBurn => {
+                self.dodge = None;
                 true
             }
             Command::RemoveItem(item) => self.record(Step::RemoveItem { item }),
@@ -555,6 +611,7 @@ impl Editor {
     pub fn undo(&mut self) -> bool {
         self.commit_pending();
         self.crop = None;
+        self.light = None;
         let done = self.project.undo();
         self.after_change();
         done
@@ -563,6 +620,7 @@ impl Editor {
     pub fn redo(&mut self) -> bool {
         self.commit_pending();
         self.crop = None;
+        self.light = None;
         let done = self.project.redo();
         self.after_change();
         done

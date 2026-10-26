@@ -389,7 +389,7 @@ impl Editor {
 
     /// Pointer shape to show at a screen point.
     pub fn cursor_at(&self, screen: Point) -> Cursor {
-        if self.smear.is_some() {
+        if self.brush_active() {
             return Cursor::Brush;
         }
         if let Some(g) = &self.gesture {
@@ -435,7 +435,7 @@ impl Editor {
             return Some(self.context_menu(hit));
         }
         let start = self.view.to_canvas(screen);
-        if self.smear.is_some() {
+        if self.brush_active() {
             self.gesture = Some(Gesture {
                 start,
                 start_screen: screen,
@@ -981,13 +981,13 @@ impl Editor {
     }
 
     /// Pointer over the canvas without a button pressed. Returns true if the frame
-    /// should be redrawn (the smear brush outline follows the pointer).
+    /// should be redrawn (the brush outline follows the pointer).
     pub fn pointer_hover(&mut self, screen: Point) -> bool {
         self.hover = Some(screen);
-        self.smear.is_some()
+        self.brush_active()
     }
 
-    /// The stroke being drawn, in source pixels (SMEAR-004).
+    /// The stroke being drawn, in source pixels (SMEAR-004, DODGE-004).
     pub(super) fn live_stroke(&self) -> Option<(ItemId, crate::model::Stroke)> {
         match &self.gesture.as_ref()?.kind {
             GestureKind::Smear(points) => self.stroke_from(points),
@@ -1047,6 +1047,8 @@ impl Editor {
         let mut menu = vec![
             MenuEntry::new("Crop", Command::Crop(id)),
             MenuEntry::new("Smear", Command::Smear(id)),
+            MenuEntry::new("Adjust light", Command::AdjustLight(id)),
+            MenuEntry::new("Dodge and burn", Command::DodgeBurn(id)),
             MenuEntry::new("Resize…", Command::Resize(id)),
             MenuEntry::new("Print size…", Command::PrintSize(id)),
             MenuEntry::separator(),

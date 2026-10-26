@@ -95,6 +95,8 @@ redo:
 | `relink_source` | PROJ-005 |
 | `remove_item` | PLACE-009 |
 | `smear` | SMEAR-004, SMEAR-005 |
+| `set_light` | LIGHT-001, LIGHT-006 |
+| `dodge_burn` | DODGE-004 |
 
 ## Implementation notes
 

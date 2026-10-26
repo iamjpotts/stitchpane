@@ -5,7 +5,7 @@ use stitchpane_core::editor::{
 };
 use stitchpane_core::geometry::{PixelRect, Point};
 use stitchpane_core::model::{
-    Curve, Feather, Filter, ItemId, Orientation, SmearKind, TransitionKind,
+    Curve, Feather, Filter, ItemId, Orientation, StrokeKind, TransitionKind,
 };
 
 use super::World;
@@ -577,7 +577,7 @@ fn start_smearing(world: &mut World, id: u32) {
 
 #[when(expr = "I set the brush to {word} {int} pixels wide at {int}% strength")]
 fn set_brush(world: &mut World, kind: String, size: f64, strength: f64) {
-    let kind = SmearKind::ALL
+    let kind = StrokeKind::SMEAR
         .into_iter()
         .find(|k| k.label().eq_ignore_ascii_case(&kind))
         .unwrap_or_else(|| panic!("no smear kind {kind}"));

@@ -10,8 +10,11 @@ use image::imageops::FilterType;
 
 use crate::codec;
 use crate::geometry::{Point, Rect};
+use crate::light;
 use crate::metadata::Exif;
-use crate::model::{Filter, Item, ItemId, ProjectState, SeamGeometry, Stroke, TransitionKind};
+use crate::model::{
+    Filter, Item, ItemId, Light, ProjectState, SeamGeometry, Stroke, TransitionKind,
+};
 use crate::panic_free::{self, Clamped};
 use crate::retouch;
 
@@ -41,8 +44,10 @@ struct ItemKey {
     width: u32,
     height: u32,
     filter: Filter,
-    /// Hash of the item's smear strokes (SMEAR-004).
+    /// Hash of the item's brush strokes (SMEAR-004, DODGE-004).
     strokes: u64,
+    /// Hash of the item's light settings (LIGHT-006).
+    light: u64,
 }
 
 /// Renders project states, caching decoded sources and resampled items.
@@ -60,7 +65,7 @@ pub struct Renderer {
     last_live: Option<(ItemCacheKey, ItemKeyBits, Arc<RgbaImage>)>,
 }
 
-type ItemKeyBits = (u32, u32, u32, u32, u32, u32, Filter, u64);
+type ItemKeyBits = (u32, u32, u32, u32, u32, u32, Filter, u64, u64);
 type ItemCacheKey = (PathBuf, ItemId);
 
 /// A resample to do in the background (UI-009).
@@ -69,6 +74,7 @@ struct Job {
     bits: ItemKeyBits,
     source: Arc<LoadedSource>,
     strokes: Vec<Stroke>,
+    light: Option<Light>,
 }
 
 struct Done {
@@ -100,9 +106,10 @@ impl Worker {
                 }
                 for job in latest {
                     let pixels = if job.strokes.is_empty() {
-                        resample(&job.source.pixels, job.bits)
+                        resample(&job.source.pixels, job.bits, job.light)
                     } else {
-                        resample(&smear(&job.source.pixels, &job.strokes), job.bits)
+                        let smeared = smear(&job.source.pixels, &job.strokes);
+                        resample(&smeared, job.bits, job.light)
                     };
                     let pixels = Arc::new(pixels);
                     let done = Done {
@@ -137,8 +144,30 @@ impl ItemKey {
             self.height,
             self.filter,
             self.strokes,
+            self.light,
         )
     }
+}
+
+/// A hash of light settings; settings that change nothing hash as none (LIGHT-006).
+fn light_hash(light: Option<&Light>) -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let Some(light) = light.filter(|l| !l.is_neutral()) else {
+        return 0;
+    };
+    let mut hasher = DefaultHasher::new();
+    for v in [
+        light.exposure,
+        light.shadows,
+        light.highlights,
+        light.radius,
+        light.black,
+        light.white,
+        light.midtones,
+    ] {
+        v.to_bits().hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 fn filter_type(filter: Filter) -> FilterType {
@@ -275,10 +304,11 @@ impl Renderer {
             height,
             filter,
             strokes: retouch::strokes_hash(strokes),
+            light: light_hash(item.light.as_ref()),
         }
         .bits();
         let cache_key = (path, item.id);
-        let pixels = self.item_pixels_for(&cache_key, key, source, strokes, stale_ok);
+        let pixels = self.item_pixels_for(&cache_key, key, source, strokes, item.light, stale_ok);
         match &self.live {
             Some((id, stroke)) if stale_ok && *id == item.id => {
                 // Draw the live stroke at preview resolution (SMEAR-004).
@@ -303,13 +333,14 @@ impl Renderer {
         }
     }
 
-    /// See [`Renderer::item_pixels`]; `key` includes the strokes.
+    /// See [`Renderer::item_pixels`]; `key` includes the strokes and light.
     fn item_pixels_for(
         &mut self,
         cache_key: &ItemCacheKey,
         key: ItemKeyBits,
         source: Arc<LoadedSource>,
         strokes: &[Stroke],
+        light: Option<Light>,
         stale_ok: bool,
     ) -> Arc<RgbaImage> {
         let cache_key = cache_key.clone();
@@ -335,6 +366,7 @@ impl Renderer {
                         bits: key,
                         source,
                         strokes: strokes.to_vec(),
+                        light,
                     };
                     // the worker thread has stopped; resample in the foreground from now on
                     if let Err(_) = worker.jobs.send(job) {
@@ -345,7 +377,7 @@ impl Renderer {
             }
         }
         let pixels = if strokes.is_empty() {
-            Arc::new(resample(&source.pixels, key))
+            Arc::new(resample(&source.pixels, key, light))
         } else {
             let smeared = match self.smeared.get(&cache_key) {
                 Some((hash, smeared)) if *hash == key.7 => smeared.clone(),
@@ -356,7 +388,7 @@ impl Renderer {
                     smeared
                 }
             };
-            Arc::new(resample(&smeared, key))
+            Arc::new(resample(&smeared, key, light))
         };
         if let Some(worker) = &mut self.worker {
             worker.pending.remove(&cache_key);
@@ -559,9 +591,10 @@ impl Layer {
     }
 }
 
-/// Crops `source` and resamples it to the size in `bits` (see [`ItemKey::bits`]).
-fn resample(source: &RgbaImage, bits: ItemKeyBits) -> RgbaImage {
-    let (left, top, crop_w, crop_h, width, height, filter, _) = bits;
+/// Crops `source`, resamples it to the size in `bits` (see [`ItemKey::bits`]) and applies
+/// the light settings at that size (LIGHT-005).
+fn resample(source: &RgbaImage, bits: ItemKeyBits, light: Option<Light>) -> RgbaImage {
+    let (left, top, crop_w, crop_h, width, height, filter, ..) = bits;
     let cropped = image::imageops::crop_imm(
         source,
         left,
@@ -570,14 +603,21 @@ fn resample(source: &RgbaImage, bits: ItemKeyBits) -> RgbaImage {
         crop_h.min(source.height().saturating_sub(top)),
     )
     .to_image();
-    if cropped.dimensions() == (width, height) {
+    let mut pixels = if cropped.dimensions() == (width, height) {
         cropped
     } else {
         image::imageops::resize(&cropped, width, height, filter_type(filter))
+    };
+    if let Some(light) = light {
+        let scale = (f64::from(width) / f64::from(crop_w.max(1))
+            + f64::from(height) / f64::from(crop_h.max(1)))
+            / 2.0;
+        light::apply(&mut pixels, &light, scale);
     }
+    pixels
 }
 
-/// The source with smear strokes applied at full resolution (SMEAR-005).
+/// The source with brush strokes applied at full resolution (SMEAR-005, DODGE-004).
 fn smear(source: &RgbaImage, strokes: &[Stroke]) -> RgbaImage {
     let mut pixels = source.clone();
     for stroke in strokes {

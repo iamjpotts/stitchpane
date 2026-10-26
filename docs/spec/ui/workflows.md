@@ -114,6 +114,8 @@ newest waiting image and start it when one finishes.
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y |
 | Crop tool | C |
 | Smear tool | S |
+| Adjust light | L |
+| Dodge and burn tool | D |
 | Remove selected image | Delete, Backspace |
 | Move / resize selection | Arrows / Ctrl+Arrows (Shift: 10 px) |
 | Rotate selection | `[` / `]` (0.1°; Shift: 1°) |
@@ -135,3 +137,7 @@ newest waiting image and start it when one finishes.
   only once iced reports it allocated (UI-011), and keeps several uploads in flight
   (UI-012). The GTK build draws each canvas image synchronously. See
   `decisions/0007-iced-canvas-uploads.md`.
+- The light bar (LIGHT-001) has two rows in both builds, so it fits the default window:
+  exposure, shadows, highlights and radius, then levels and the buttons. The GTK bar's
+  black and white point ranges follow each other so they cannot cross; the iced bar
+  leaves the settings unchanged while a field is not a number or is out of range.

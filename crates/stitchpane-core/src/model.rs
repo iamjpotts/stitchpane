@@ -134,40 +134,155 @@ impl Feather {
     }
 }
 
-/// What a smear stroke does to the pixels under the brush (SMEAR-002).
+/// What a brush stroke does to the pixels under the brush: the smear kinds
+/// (SMEAR-002) and dodge and burn (DODGE-002).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SmearKind {
+pub enum StrokeKind {
     #[default]
     Smudge,
     Blur,
     Push,
+    Dodge,
+    Burn,
 }
 
-impl SmearKind {
-    pub const ALL: [SmearKind; 3] = [SmearKind::Smudge, SmearKind::Blur, SmearKind::Push];
+impl StrokeKind {
+    /// The smear tool's kinds (SMEAR-002).
+    pub const SMEAR: [StrokeKind; 3] = [StrokeKind::Smudge, StrokeKind::Blur, StrokeKind::Push];
+    /// The dodge and burn tool's kinds (DODGE-002).
+    pub const DODGE_BURN: [StrokeKind; 2] = [StrokeKind::Dodge, StrokeKind::Burn];
 
     pub fn label(self) -> &'static str {
         match self {
-            SmearKind::Smudge => "Smudge",
-            SmearKind::Blur => "Blur",
-            SmearKind::Push => "Push",
+            StrokeKind::Smudge => "Smudge",
+            StrokeKind::Blur => "Blur",
+            StrokeKind::Push => "Push",
+            StrokeKind::Dodge => "Dodge",
+            StrokeKind::Burn => "Burn",
+        }
+    }
+
+    pub fn is_smear(self) -> bool {
+        StrokeKind::SMEAR.contains(&self)
+    }
+}
+
+/// The pixels dodge and burn changes (DODGE-002).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToneRange {
+    Shadows,
+    #[default]
+    Midtones,
+    Highlights,
+}
+
+impl ToneRange {
+    pub const ALL: [ToneRange; 3] = [
+        ToneRange::Shadows,
+        ToneRange::Midtones,
+        ToneRange::Highlights,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ToneRange::Shadows => "Shadows",
+            ToneRange::Midtones => "Midtones",
+            ToneRange::Highlights => "Highlights",
         }
     }
 }
 
-/// One smear stroke on an item (SMEAR-004). Coordinates are pixels of the upright
-/// source image, so the stroke stays with the image (SMEAR-005).
+/// One brush stroke on an item (SMEAR-004, DODGE-004). Coordinates are pixels of the
+/// upright source image, so the stroke stays with the image (SMEAR-005).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stroke {
-    pub kind: SmearKind,
+    pub kind: StrokeKind,
     /// Brush diameter in source pixels.
     pub size: f64,
     /// `0..=1`.
     pub strength: f64,
     /// The brush path, as `[x, y]` source pixels.
     pub points: Vec<[f64; 2]>,
+    /// Dodge and burn only: the pixels changed (DODGE-002).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<ToneRange>,
+}
+
+/// Light settings of one item (LIGHT-002 to LIGHT-004).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Light {
+    /// Stops, `-5..=5` (LIGHT-002).
+    pub exposure: f64,
+    /// `0..=1` (LIGHT-003).
+    pub shadows: f64,
+    /// `0..=1` (LIGHT-003).
+    pub highlights: f64,
+    /// Size of the area each pixel is judged by, in source pixels (LIGHT-003).
+    pub radius: f64,
+    /// Levels black point, white point and midtones (LIGHT-004).
+    pub black: f64,
+    pub white: f64,
+    pub midtones: f64,
+}
+
+impl Light {
+    /// Settings that change nothing, with a radius for shadows and highlights.
+    pub fn neutral(radius: f64) -> Self {
+        Self {
+            exposure: 0.0,
+            shadows: 0.0,
+            highlights: 0.0,
+            radius,
+            black: 0.0,
+            white: 255.0,
+            midtones: 1.0,
+        }
+    }
+
+    /// Default radius: 5% of the longer side of a `width` × `height` image (LIGHT-003).
+    pub fn default_radius(width: u32, height: u32) -> f64 {
+        (f64::from(width.max(height)) * 0.05).round().max(1.0)
+    }
+
+    /// Whether the settings change no pixel; the radius alone changes nothing.
+    pub fn is_neutral(&self) -> bool {
+        self.exposure == 0.0
+            && self.shadows == 0.0
+            && self.highlights == 0.0
+            && self.black == 0.0
+            && self.white == 255.0
+            && self.midtones == 1.0
+    }
+
+    /// Why the settings are out of range, if they are.
+    pub fn check(&self) -> Result<(), StepError> {
+        let within = |v: f64, lo: f64, hi: f64| v.is_finite() && v >= lo && v <= hi;
+        if !within(self.exposure, -5.0, 5.0) {
+            return Err(invalid("exposure must be from -5 to +5 stops"));
+        }
+        if !(within(self.shadows, 0.0, 1.0) && within(self.highlights, 0.0, 1.0)) {
+            return Err(invalid("shadows and highlights must be from 0% to 100%"));
+        }
+        if !(self.radius.is_finite() && self.radius >= 1.0) {
+            return Err(invalid("radius must be at least 1 pixel"));
+        }
+        if !(within(self.black, 0.0, 254.0)
+            && within(self.white, 1.0, 255.0)
+            && self.white > self.black)
+        {
+            return Err(invalid(
+                "levels need a black point below the white point, from 0 to 255",
+            ));
+        }
+        if !within(self.midtones, 0.1, 9.99) {
+            return Err(invalid("midtones must be from 0.10 to 9.99"));
+        }
+        Ok(())
+    }
 }
 
 /// A transition between two items (BLEND-006).
@@ -253,6 +368,8 @@ pub struct Item {
     pub filter: Filter,
     pub feather: Option<Feather>,
     pub metadata_stripped: bool,
+    /// `None` until the light is adjusted (LIGHT-006).
+    pub light: Option<Light>,
 }
 
 impl Item {
@@ -417,6 +534,16 @@ pub enum Step {
         item: ItemId,
         stroke: Stroke,
     },
+    /// Replaces the item's light settings (LIGHT-006).
+    SetLight {
+        item: ItemId,
+        light: Light,
+    },
+    /// A dodge or burn stroke (DODGE-004).
+    DodgeBurn {
+        item: ItemId,
+        stroke: Stroke,
+    },
 }
 
 impl Step {
@@ -440,6 +567,11 @@ impl Step {
             Step::RelinkSource { .. } => "Locate source",
             Step::RemoveItem { .. } => "Remove image",
             Step::Smear { .. } => "Smear",
+            Step::SetLight { .. } => "Adjust light",
+            Step::DodgeBurn { stroke, .. } => match stroke.kind {
+                StrokeKind::Burn => "Burn",
+                _ => "Dodge",
+            },
         }
     }
 }
@@ -723,6 +855,7 @@ impl ProjectState {
                     filter: Filter::default(),
                     feather: None,
                     metadata_stripped: false,
+                    light: None,
                 });
             }
             Step::MoveItem { item, x, y } => {
@@ -883,19 +1016,40 @@ impl ProjectState {
                 self.strokes.remove(&item);
             }
             Step::Smear { item, ref stroke } => {
-                self.item(item).ok_or(StepError::UnknownItem(item))?;
-                let finite = stroke.points.iter().flatten().all(|v| v.is_finite());
-                if !(finite && stroke.size.is_finite() && stroke.size > 0.0) {
-                    return Err(invalid("brush size must be positive"));
+                if !stroke.kind.is_smear() || stroke.range.is_some() {
+                    return Err(invalid("a smear stroke needs a smear kind and no range"));
                 }
-                if !(0.0..=1.0).contains(&stroke.strength) || stroke.points.is_empty() {
-                    return Err(invalid(
-                        "a stroke needs points and a strength from 0% to 100%",
-                    ));
+                self.add_stroke(item, stroke)?;
+            }
+            Step::DodgeBurn { item, ref stroke } => {
+                if stroke.kind.is_smear() || stroke.range.is_none() {
+                    return Err(invalid("a dodge or burn stroke needs its kind and range"));
                 }
-                self.strokes.entry(item).or_default().push(stroke.clone());
+                self.add_stroke(item, stroke)?;
+            }
+            Step::SetLight { item, light } => {
+                light.check()?;
+                self.item_mut(item)?.light = Some(light);
             }
         }
+        Ok(())
+    }
+}
+
+impl ProjectState {
+    /// Checks a brush stroke and adds it to the item's strokes (SMEAR-004, DODGE-004).
+    fn add_stroke(&mut self, item: ItemId, stroke: &Stroke) -> Result<(), StepError> {
+        self.item(item).ok_or(StepError::UnknownItem(item))?;
+        let finite = stroke.points.iter().flatten().all(|v| v.is_finite());
+        if !(finite && stroke.size.is_finite() && stroke.size > 0.0) {
+            return Err(invalid("brush size must be positive"));
+        }
+        if !(0.0..=1.0).contains(&stroke.strength) || stroke.points.is_empty() {
+            return Err(invalid(
+                "a stroke needs points and a strength from 0% to 100%",
+            ));
+        }
+        self.strokes.entry(item).or_default().push(stroke.clone());
         Ok(())
     }
 }

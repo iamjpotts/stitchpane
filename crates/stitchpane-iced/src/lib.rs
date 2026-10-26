@@ -25,7 +25,7 @@ use stitchpane_core::editor::{
     Modifiers,
 };
 use stitchpane_core::geometry::{PixelRect, Point};
-use stitchpane_core::model::SmearKind;
+use stitchpane_core::model::{Light, StrokeKind, ToneRange};
 
 pub fn run() -> ExitCode {
     let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
@@ -76,6 +76,65 @@ pub enum Message {
     SmearChoice(String),
     /// Size or strength typed in the smear bar.
     SmearField(usize, String),
+    /// A setting typed in the light bar, by index into [`LIGHT_FIELDS`].
+    LightField(usize, String),
+    DodgeKind(String),
+    DodgeRange(String),
+    /// Size or strength typed in the dodge and burn bar.
+    DodgeField(usize, String),
+}
+
+/// Labels of the light bar's fields, in the order of `App::light_fields` (LIGHT-001).
+const LIGHT_FIELDS: [&str; 7] = [
+    "Exposure",
+    "Shadows %",
+    "Highlights %",
+    "Radius",
+    "Black",
+    "Midtones",
+    "White",
+];
+
+/// Light settings as the light bar shows them, in the order of [`LIGHT_FIELDS`].
+fn light_fields(l: &Light) -> [String; 7] {
+    [
+        format!("{:.1}", l.exposure),
+        format!("{}", (l.shadows * 100.0).round()),
+        format!("{}", (l.highlights * 100.0).round()),
+        format!("{}", l.radius),
+        format!("{}", l.black),
+        format!("{:.2}", l.midtones),
+        format!("{}", l.white),
+    ]
+}
+
+/// Light settings typed in the light bar, if every field is a number.
+fn parse_light(fields: &[String; 7]) -> Option<Light> {
+    let mut values = [0f64; 7];
+    for (v, field) in values.iter_mut().zip(fields) {
+        *v = match field.trim().parse() {
+            Ok(n) => n,
+            Err(_) => return None,
+        };
+    }
+    let [
+        exposure,
+        shadows,
+        highlights,
+        radius,
+        black,
+        midtones,
+        white,
+    ] = values;
+    Some(Light {
+        exposure,
+        shadows: shadows / 100.0,
+        highlights: highlights / 100.0,
+        radius,
+        black,
+        white,
+        midtones,
+    })
 }
 
 /// The main menus.
@@ -120,6 +179,10 @@ pub struct App {
     crop_fields: [String; 4],
     /// Brush size and strength (%) as typed in the smear bar (SMEAR-003).
     smear_fields: [String; 2],
+    /// Light settings as typed in the light bar (LIGHT-001).
+    light_fields: [String; 7],
+    /// Brush size and strength (%) as typed in the dodge and burn bar (DODGE-003).
+    dodge_fields: [String; 2],
     custom_aspect: [String; 2],
     window: Option<window::Id>,
     /// Status bar notices, computed in refresh() (META-001, PROJ-005).
@@ -189,6 +252,8 @@ impl App {
             modal: None,
             crop_fields: Default::default(),
             smear_fields: Default::default(),
+            light_fields: Default::default(),
+            dodge_fields: Default::default(),
             custom_aspect: ["3".to_owned(), "4".to_owned()],
             window: None,
             exif_notice: None,
@@ -245,12 +310,27 @@ impl App {
                 (tool.strength * 100.0).round().to_string(),
             ];
         }
+        if let Some(tool) = self.editor.light_tool() {
+            self.light_fields = light_fields(&tool.light);
+        }
+        if let Some(tool) = self.editor.dodge_tool() {
+            self.dodge_fields = [
+                tool.size.to_string(),
+                (tool.strength * 100.0).round().to_string(),
+            ];
+        }
         task
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         // Keep what the user is typing in the crop fields (CROP-002).
-        let typing = matches!(message, Message::CropField(..) | Message::SmearField(..));
+        let typing = matches!(
+            message,
+            Message::CropField(..)
+                | Message::SmearField(..)
+                | Message::LightField(..)
+                | Message::DodgeField(..)
+        );
         if matches!(message, Message::PollBackground) && !self.editor.poll_background() {
             return Task::none();
         }
@@ -261,10 +341,14 @@ impl App {
         let task = self.handle(message);
         let fields = self.crop_fields.clone();
         let smear_fields = self.smear_fields.clone();
+        let typed_light = self.light_fields.clone();
+        let dodge_fields = self.dodge_fields.clone();
         let allocation = self.refresh();
         if typing {
             self.crop_fields = fields;
             self.smear_fields = smear_fields;
+            self.light_fields = typed_light;
+            self.dodge_fields = dodge_fields;
         }
         Task::batch([task, allocation])
     }
@@ -386,7 +470,7 @@ impl App {
                 self.menu = Some((p, Editor::zoom_menu()));
             }
             Message::SmearChoice(label) => {
-                if let Some(kind) = SmearKind::ALL.into_iter().find(|k| k.label() == label) {
+                if let Some(kind) = StrokeKind::SMEAR.into_iter().find(|k| k.label() == label) {
                     self.editor.set_smear_kind(kind);
                 }
             }
@@ -399,6 +483,42 @@ impl App {
                     }
                 }
                 if let Some(field) = self.smear_fields.get_mut(index) {
+                    *field = value;
+                }
+            }
+            Message::LightField(index, value) => {
+                if let Some(field) = self.light_fields.get_mut(index) {
+                    *field = value;
+                }
+                // settings that are not numbers or out of range leave the light unchanged
+                if let Some(light) = parse_light(&self.light_fields)
+                    && let Ok(()) = light.check()
+                {
+                    self.editor.set_light(light);
+                }
+            }
+            Message::DodgeKind(label) => {
+                if let Some(kind) = StrokeKind::DODGE_BURN
+                    .into_iter()
+                    .find(|k| k.label() == label)
+                {
+                    self.editor.set_dodge_kind(kind);
+                }
+            }
+            Message::DodgeRange(label) => {
+                if let Some(range) = ToneRange::ALL.into_iter().find(|r| r.label() == label) {
+                    self.editor.set_dodge_range(range);
+                }
+            }
+            Message::DodgeField(index, value) => {
+                if let Ok(v) = value.trim().parse::<f64>() {
+                    if index == 0 {
+                        self.editor.set_dodge_size(v);
+                    } else {
+                        self.editor.set_dodge_strength(v / 100.0);
+                    }
+                }
+                if let Some(field) = self.dodge_fields.get_mut(index) {
                     *field = value;
                 }
             }
@@ -572,7 +692,7 @@ impl App {
             .spacing(4)
             .align_y(iced::Alignment::Center)
         };
-        let kinds: Vec<String> = SmearKind::ALL
+        let kinds: Vec<String> = StrokeKind::SMEAR
             .iter()
             .map(|k| k.label().to_owned())
             .collect();
@@ -589,6 +709,90 @@ impl App {
             button(text("Done"))
                 .style(button::success)
                 .on_press(Message::Command(Command::EndSmear)),
+        ]
+        .spacing(10)
+        .padding(6)
+        .align_y(iced::Alignment::Center);
+        Some(bar.into())
+    }
+
+    /// The light tool's bar (LIGHT-001 to LIGHT-004), in two rows so it fits the window:
+    /// exposure and shadows and highlights, then levels and the buttons.
+    fn light_bar(&self) -> Option<Element<'_, Message>> {
+        self.editor.light_tool()?;
+        let row_of = |title: &'static str, range: std::ops::Range<usize>| {
+            let mut bar = row![text(title)]
+                .spacing(10)
+                .padding(6)
+                .align_y(iced::Alignment::Center);
+            for index in range {
+                let label = LIGHT_FIELDS.get(index).copied().unwrap_or_default();
+                bar = bar.push(
+                    row![
+                        text(label),
+                        text_input("", self.light_fields.get(index).map_or("", String::as_str))
+                            .on_input(move |v| Message::LightField(index, v))
+                            .width(60)
+                    ]
+                    .spacing(4)
+                    .align_y(iced::Alignment::Center),
+                );
+            }
+            bar
+        };
+        let first = row_of("Light", 0..4);
+        let second = row_of("Levels", 4..7)
+            .push(Space::new().width(Length::Fill))
+            .push(button(text("Reset")).on_press(Message::Command(Command::ResetLight)))
+            .push(button(text("Cancel")).on_press(Message::Command(Command::CancelLight)))
+            .push(
+                button(text("Apply"))
+                    .style(button::success)
+                    .on_press(Message::Command(Command::ApplyLight)),
+            );
+        Some(column![first, second].into())
+    }
+
+    /// The dodge and burn tool's bar (DODGE-001 to DODGE-003).
+    fn dodge_bar(&self) -> Option<Element<'_, Message>> {
+        let tool = self.editor.dodge_tool()?;
+        let field = |index: usize, label: &'static str| {
+            row![
+                text(label),
+                text_input("", self.dodge_fields.get(index).map_or("", String::as_str))
+                    .on_input(move |v| Message::DodgeField(index, v))
+                    .width(70)
+            ]
+            .spacing(4)
+            .align_y(iced::Alignment::Center)
+        };
+        let kinds: Vec<String> = StrokeKind::DODGE_BURN
+            .iter()
+            .map(|k| k.label().to_owned())
+            .collect();
+        let ranges: Vec<String> = ToneRange::ALL
+            .iter()
+            .map(|r| r.label().to_owned())
+            .collect();
+        let bar = row![
+            text("Dodge and burn"),
+            pick_list(
+                kinds,
+                Some(tool.kind.label().to_owned()),
+                Message::DodgeKind
+            ),
+            text("Range"),
+            pick_list(
+                ranges,
+                Some(tool.range.label().to_owned()),
+                Message::DodgeRange
+            ),
+            field(0, "Size"),
+            field(1, "Strength %"),
+            Space::new().width(Length::Fill),
+            button(text("Done"))
+                .style(button::success)
+                .on_press(Message::Command(Command::EndDodgeBurn)),
         ]
         .spacing(10)
         .padding(6)
@@ -684,6 +888,12 @@ impl App {
             page = page.push(bar);
         }
         if let Some(bar) = self.smear_bar() {
+            page = page.push(bar);
+        }
+        if let Some(bar) = self.light_bar() {
+            page = page.push(bar);
+        }
+        if let Some(bar) = self.dodge_bar() {
             page = page.push(bar);
         }
         page = page.push(layers);

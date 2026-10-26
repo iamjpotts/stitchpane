@@ -8,6 +8,7 @@ Image editor focused on ease of use.
 * Crop
 * Convert format
 * Change resolution
+* Lighten or darken - exposure, shadows and highlights, levels, and a dodge and burn brush
 
 ## Combining Multiple Images
 

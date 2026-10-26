@@ -126,6 +126,17 @@ fn red_and_blue_image(world: &mut World, file: String, w: u32, h: u32) {
     write_image(world, &path, &image, None);
 }
 
+#[given(expr = "a shaded image {string} of {int} by {int} pixels")]
+fn shaded_image(world: &mut World, file: String, w: u32, h: u32) {
+    // shade (40) on the left half, sunlight (220) on the right
+    let path = world.path(&file);
+    let image = RgbaImage::from_fn(w, h, |x, _| {
+        let v = if x < w / 2 { 40 } else { 220 };
+        image::Rgba([v, v, v, 255])
+    });
+    write_image(world, &path, &image, None);
+}
+
 #[given(expr = "a patterned image {string} of {int} by {int} pixels")]
 fn pattern(world: &mut World, file: String, w: u32, h: u32) {
     let path = world.path(&file);

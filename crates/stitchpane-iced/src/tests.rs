@@ -467,3 +467,55 @@ fn canvas_uploads_several_frames_at_once() {
     present(&mut app);
     assert_eq!(shown_id(&app), Some(newest));
 }
+
+#[test]
+fn light_bar_edits_and_applies_the_settings() {
+    // spec: LIGHT-001, LIGHT-006
+    let dir = Scratch::new("light");
+    let a = dir.image("a.png", 400, 300, None);
+    let mut app = app_with(&[&a]);
+    let _ = app.update(Message::PointerDown(
+        IPoint::new(512.0, 320.0),
+        PointerButton::Secondary,
+    ));
+    click(&mut app, "Adjust light");
+    assert_shows(&app, "Reset");
+    let _ = app.update(Message::LightField(0, "1.5".to_owned()));
+    assert_eq!(app.editor.light_tool().map(|t| t.light.exposure), Some(1.5));
+    // a field typed out of range leaves the settings as they were
+    let _ = app.update(Message::LightField(0, "9".to_owned()));
+    assert_eq!(app.light_fields[0], "9");
+    assert_eq!(app.editor.light_tool().map(|t| t.light.exposure), Some(1.5));
+    let _ = app.update(Message::LightField(0, "1.5".to_owned()));
+    click(&mut app, "Apply");
+    assert!(app.editor.light_tool().is_none());
+    assert_eq!(item(&app, 1).light.map(|l| l.exposure), Some(1.5));
+    assert_eq!(
+        app.editor.undo_label().as_deref(),
+        Some("Undo Adjust light")
+    );
+}
+
+#[test]
+fn dodge_bar_sets_the_brush() {
+    // spec: DODGE-001, DODGE-003
+    let dir = Scratch::new("dodge");
+    let a = dir.image("a.png", 400, 300, None);
+    let mut app = app_with(&[&a]);
+    let _ = app.update(Message::PointerDown(
+        IPoint::new(512.0, 320.0),
+        PointerButton::Secondary,
+    ));
+    click(&mut app, "Dodge and burn");
+    assert_shows(&app, "Done");
+    let _ = app.update(Message::DodgeField(0, "30".to_owned()));
+    let _ = app.update(Message::DodgeKind("Burn".to_owned()));
+    let _ = app.update(Message::DodgeRange("Highlights".to_owned()));
+    let tool = app.editor.dodge_tool().expect("dodge and burn tool");
+    assert_eq!(
+        (tool.size, tool.kind, tool.range),
+        (30.0, StrokeKind::Burn, ToneRange::Highlights)
+    );
+    click(&mut app, "Done");
+    assert!(app.editor.dodge_tool().is_none());
+}

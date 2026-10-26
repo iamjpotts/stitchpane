@@ -1,10 +1,12 @@
-//! Smear strokes applied to pixels (SMEAR-002 to SMEAR-005).
+//! Brush strokes applied to pixels: smear (SMEAR-002 to SMEAR-005) and dodge and burn
+//! (DODGE-002).
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use image::RgbaImage;
 
-use crate::model::{SmearKind, Stroke};
+use crate::light;
+use crate::model::{Stroke, StrokeKind, ToneRange};
 use crate::panic_free::{self, Clamped};
 
 /// Applies `stroke` to `image`. `map` converts the stroke's source-pixel coordinates to
@@ -23,15 +25,29 @@ pub fn apply(
     // Smudge stamps the color it carries, so its dabs need to be closer together to
     // avoid a scalloped texture.
     let spacing = match stroke.kind {
-        SmearKind::Smudge => radius / 12.0,
-        SmearKind::Blur | SmearKind::Push => radius / 4.0,
+        StrokeKind::Smudge => radius / 12.0,
+        StrokeKind::Blur | StrokeKind::Push | StrokeKind::Dodge | StrokeKind::Burn => radius / 4.0,
     };
     let dabs = dabs(stroke.points.iter().map(|&p| map(p)), spacing.max(0.5));
     let strength = stroke.strength as f32;
     match stroke.kind {
-        SmearKind::Smudge => smudge(image, &dabs, radius, strength),
-        SmearKind::Blur => blur(image, &dabs, radius, strength),
-        SmearKind::Push => push(image, &dabs, radius, strength),
+        StrokeKind::Smudge => smudge(image, &dabs, radius, strength),
+        StrokeKind::Blur => blur(image, &dabs, radius, strength),
+        StrokeKind::Push => push(image, &dabs, radius, strength),
+        StrokeKind::Dodge | StrokeKind::Burn => {
+            let stops = if stroke.kind == StrokeKind::Dodge {
+                strength
+            } else {
+                -strength
+            };
+            tone(
+                image,
+                &dabs,
+                radius,
+                stops,
+                stroke.range.unwrap_or_default(),
+            );
+        }
     }
 }
 
@@ -42,6 +58,7 @@ pub fn strokes_hash<'a>(strokes: impl IntoIterator<Item = &'a Stroke>) -> u64 {
         stroke.kind.hash(&mut hasher);
         stroke.size.to_bits().hash(&mut hasher);
         stroke.strength.to_bits().hash(&mut hasher);
+        stroke.range.hash(&mut hasher);
         for p in &stroke.points {
             p[0].to_bits().hash(&mut hasher);
             p[1].to_bits().hash(&mut hasher);
@@ -224,6 +241,72 @@ fn box_blur(area: &[[f32; 4]], side: usize, k: i64, horizontal: bool) -> Vec<[f3
     out
 }
 
+/// How much dodge and burn changes a pixel of encoded brightness `v`, `0..=1`, for a
+/// range (DODGE-002).
+fn range_weight(range: ToneRange, v: f32) -> f32 {
+    let smooth = |t: f32| {
+        let t = t.clamped(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    match range {
+        ToneRange::Shadows => smooth((0.6 - v) / 0.6),
+        ToneRange::Midtones => 1.0 - (2.0 * v - 1.0).powi(2),
+        ToneRange::Highlights => smooth((v - 0.4) / 0.6),
+    }
+}
+
+/// Lightens (positive `stops`) or darkens the pixels under the brush, by up to `stops`
+/// at the brush center. The stroke's coverage is the most any dab gives a pixel, so a
+/// stroke does not build up where it crosses itself (DODGE-002).
+fn tone(image: &mut RgbaImage, dabs: &[[f64; 2]], radius: f64, stops: f32, range: ToneRange) {
+    let (w, h) = (i64::from(image.width()), i64::from(image.height()));
+    let r = radius.ceil() as i64;
+    let low = |v: f64| (v.floor() as i64).saturating_sub(r).max(0);
+    let high = |v: f64, limit: i64| {
+        (v.floor() as i64)
+            .saturating_add(r)
+            .saturating_add(1)
+            .min(limit)
+    };
+    let x0 = dabs.iter().map(|d| low(d[0])).min().unwrap_or(0);
+    let y0 = dabs.iter().map(|d| low(d[1])).min().unwrap_or(0);
+    let x1 = dabs.iter().map(|d| high(d[0], w)).max().unwrap_or(0);
+    let y1 = dabs.iter().map(|d| high(d[1], h)).max().unwrap_or(0);
+    let side = x1.saturating_sub(x0).max(0) as usize;
+    let rows = y1.saturating_sub(y0).max(0) as usize;
+    let mut coverage = vec![0f32; side.saturating_mul(rows)];
+    for &dab in dabs {
+        for (x, y, _, weight) in brush_pixels(image, dab, radius) {
+            let i = (y.saturating_sub(y0) as usize)
+                .saturating_mul(side)
+                .saturating_add(x.saturating_sub(x0) as usize);
+            if let Some(c) = coverage.get_mut(i) {
+                *c = c.max(weight);
+            }
+        }
+    }
+    for (j, row) in panic_free::chunks(&coverage, side).enumerate() {
+        for (i, &c) in row.iter().enumerate() {
+            if c <= 0.0 {
+                continue;
+            }
+            let (x, y) = (x0.saturating_add(i as i64), y0.saturating_add(j as i64));
+            let (Ok(px), Ok(py)) = (u32::try_from(x), u32::try_from(y)) else {
+                continue;
+            };
+            let Some(pixel) = image.get_pixel_mut_checked(px, py) else {
+                continue;
+            };
+            let rgb = [pixel.0[0], pixel.0[1], pixel.0[2]].map(light::to_linear);
+            let v = light::to_encoded(light::luminance(rgb));
+            let gain = 2f32.powf(stops * c * range_weight(range, v));
+            for (out, l) in pixel.0.iter_mut().zip(rgb) {
+                *out = light::to_u8(l * gain);
+            }
+        }
+    }
+}
+
 /// Moves pixels under the brush along the stroke.
 fn push(image: &mut RgbaImage, dabs: &[[f64; 2]], radius: f64, strength: f32) {
     for (&from, &to) in dabs.iter().zip(dabs.iter().skip(1)) {
@@ -280,12 +363,13 @@ mod tests {
         })
     }
 
-    fn stroke(kind: SmearKind, points: Vec<[f64; 2]>) -> Stroke {
+    fn stroke(kind: StrokeKind, points: Vec<[f64; 2]>) -> Stroke {
         Stroke {
             kind,
             size: 10.0,
             strength: 0.8,
             points,
+            range: None,
         }
     }
 
@@ -293,7 +377,7 @@ mod tests {
     fn smudge_drags_color_along_the_stroke() {
         // spec: SMEAR-002
         let mut image = halves();
-        let s = stroke(SmearKind::Smudge, vec![[10.0, 10.0], [30.0, 10.0]]);
+        let s = stroke(StrokeKind::Smudge, vec![[10.0, 10.0], [30.0, 10.0]]);
         apply(&mut image, &s, |p| p, 1.0);
         let p = image.get_pixel(30, 10).0;
         assert!(p[0] > 60, "red was dragged into blue: {p:?}");
@@ -304,7 +388,7 @@ mod tests {
     fn blur_mixes_the_edge() {
         // spec: SMEAR-002
         let mut image = halves();
-        let s = stroke(SmearKind::Blur, vec![[20.0, 10.0], [20.0, 11.0]]);
+        let s = stroke(StrokeKind::Blur, vec![[20.0, 10.0], [20.0, 11.0]]);
         apply(&mut image, &s, |p| p, 1.0);
         let p = image.get_pixel(19, 10).0;
         assert!(p[2] > 20 && p[0] < 250, "edge is softened: {p:?}");
@@ -314,17 +398,89 @@ mod tests {
     fn push_moves_pixels() {
         // spec: SMEAR-002
         let mut image = halves();
-        let s = stroke(SmearKind::Push, vec![[16.0, 10.0], [24.0, 10.0]]);
+        let s = stroke(StrokeKind::Push, vec![[16.0, 10.0], [24.0, 10.0]]);
         apply(&mut image, &s, |p| p, 1.0);
         let p = image.get_pixel(21, 10).0;
         assert!(p[0] > 100, "red pushed right: {p:?}");
+    }
+
+    fn tone_stroke(kind: StrokeKind, range: ToneRange, points: Vec<[f64; 2]>) -> Stroke {
+        Stroke {
+            kind,
+            size: 20.0,
+            strength: 1.0,
+            points,
+            range: Some(range),
+        }
+    }
+
+    /// Dark on the left, middle gray in the center, bright on the right.
+    fn steps() -> RgbaImage {
+        RgbaImage::from_fn(90, 30, |x, _| {
+            let v = [40u8, 128, 220][(x / 30) as usize];
+            image::Rgba([v, v, v, 255])
+        })
+    }
+
+    #[test]
+    fn dodge_lightens_and_burn_darkens_under_the_brush() {
+        // spec: DODGE-002
+        for (kind, lighter) in [(StrokeKind::Dodge, true), (StrokeKind::Burn, false)] {
+            let mut image = steps();
+            let s = tone_stroke(kind, ToneRange::Midtones, vec![[45.0, 15.0]]);
+            apply(&mut image, &s, |p| p, 1.0);
+            let center = image.get_pixel(45, 15).0[0];
+            // one stop at the brush center at 100%, in linear light
+            let expected = light::to_u8(light::to_linear(128) * if lighter { 2.0 } else { 0.5 });
+            assert!(
+                center.abs_diff(expected) <= 2,
+                "{kind:?}: {center}, expected {expected}"
+            );
+            assert_eq!(image.get_pixel(45, 0).0[0], 128, "outside the brush");
+        }
+    }
+
+    #[test]
+    fn the_range_limits_dodge_to_its_pixels() {
+        // spec: DODGE-002
+        let mut image = steps();
+        let path = vec![[5.0, 15.0], [85.0, 15.0]];
+        apply(
+            &mut image,
+            &tone_stroke(StrokeKind::Dodge, ToneRange::Highlights, path),
+            |p| p,
+            1.0,
+        );
+        assert_eq!(image.get_pixel(15, 15).0[0], 40, "shadows are left alone");
+        assert!(image.get_pixel(75, 15).0[0] > 230, "highlights are lighter");
+    }
+
+    #[test]
+    fn a_stroke_does_not_build_up_where_it_crosses_itself() {
+        // spec: DODGE-002
+        let once = tone_stroke(StrokeKind::Dodge, ToneRange::Midtones, vec![[45.0, 15.0]]);
+        let back_and_forth = tone_stroke(
+            StrokeKind::Dodge,
+            ToneRange::Midtones,
+            vec![
+                [45.0, 15.0],
+                [50.0, 15.0],
+                [45.0, 15.0],
+                [50.0, 15.0],
+                [45.0, 15.0],
+            ],
+        );
+        let (mut a, mut b) = (steps(), steps());
+        apply(&mut a, &once, |p| p, 1.0);
+        apply(&mut b, &back_and_forth, |p| p, 1.0);
+        assert_eq!(a.get_pixel(45, 15), b.get_pixel(45, 15));
     }
 
     #[test]
     fn mapping_scales_the_brush() {
         // spec: SMEAR-005
         let mut full = halves();
-        let s = stroke(SmearKind::Smudge, vec![[10.0, 10.0], [30.0, 10.0]]);
+        let s = stroke(StrokeKind::Smudge, vec![[10.0, 10.0], [30.0, 10.0]]);
         apply(&mut full, &s, |p| p, 1.0);
         let mut half = image::imageops::resize(&halves(), 20, 10, image::imageops::Nearest);
         apply(&mut half, &s, |p| [p[0] / 2.0, p[1] / 2.0], 0.5);

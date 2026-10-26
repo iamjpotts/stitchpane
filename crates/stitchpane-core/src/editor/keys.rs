@@ -111,7 +111,18 @@ impl Editor {
                 Some(item) => self.run(Command::Smear(item)),
                 None => KeyOutcome::Unhandled,
             },
+            Key::Char('l') => match self.selection.item() {
+                Some(item) => self.run(Command::AdjustLight(item)),
+                None => KeyOutcome::Unhandled,
+            },
+            Key::Char('d') => match self.selection.item() {
+                Some(item) => self.run(Command::DodgeBurn(item)),
+                None => KeyOutcome::Unhandled,
+            },
             Key::Enter | Key::Escape if self.smear.is_some() => self.run(Command::EndSmear),
+            Key::Enter | Key::Escape if self.dodge.is_some() => self.run(Command::EndDodgeBurn),
+            Key::Enter if self.light.is_some() => self.run(Command::ApplyLight),
+            Key::Escape if self.light.is_some() => self.run(Command::CancelLight),
             Key::Delete | Key::Backspace => match self.selection.item() {
                 Some(item) => self.run(Command::RemoveItem(item)),
                 None => KeyOutcome::Unhandled,

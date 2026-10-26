@@ -4,6 +4,7 @@
 mod checks;
 mod editing;
 mod files;
+mod light;
 mod project;
 
 use std::path::{Path, PathBuf};
@@ -27,6 +28,8 @@ pub struct World {
     pub export: Option<ExportSettings>,
     /// A remembered screen position, for "stays in place" checks.
     pub remembered: Option<Point>,
+    /// A remembered rendering of the canvas, for "lighter than before" checks.
+    pub remembered_canvas: Option<image::RgbaImage>,
     pub images: Vec<PathBuf>,
     /// A command the editor handed back to the UI (it needs a dialog).
     pub ui_request: Option<stitchpane_core::editor::Command>,
@@ -58,6 +61,7 @@ impl World {
             menu: Vec::new(),
             export: None,
             remembered: None,
+            remembered_canvas: None,
             images: Vec::new(),
             ui_request: None,
         }
@@ -98,6 +102,7 @@ pub fn color(name: &str) -> [u8; 4] {
         "green" => [0, 255, 0, 255],
         "blue" => [0, 0, 255, 255],
         "white" => [255, 255, 255, 255],
+        "gray" => [128, 128, 128, 255],
         "black" => [0, 0, 0, 255],
         "transparent" => [0, 0, 0, 0],
         other => panic!("unknown color {other}"),

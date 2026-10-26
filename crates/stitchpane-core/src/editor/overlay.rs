@@ -252,9 +252,9 @@ impl Editor {
             }
         }
 
-        // Smear brush outline under the pointer (SMEAR-001).
-        if let (Some(tool), Some(at)) = (self.smear_tool(), self.hover) {
-            let r = tool.size * view.zoom / 2.0;
+        // Brush outline under the pointer (SMEAR-001, DODGE-001).
+        if let (Some(size), Some(at)) = (self.brush_size(), self.hover) {
+            let r = size * view.zoom / 2.0;
             let n = ((r * 0.8).ceil() as usize).clamped(16, 128);
             let ring: Vec<Point> = (0..n)
                 .map(|i| {

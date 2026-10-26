@@ -4,6 +4,7 @@
 pub mod codec;
 pub mod editor;
 pub mod geometry;
+pub mod light;
 pub mod metadata;
 pub mod model;
 pub mod panic_free;
