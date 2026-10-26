@@ -17,6 +17,8 @@ use iced::widget::{
 use iced::{
     Element, Event, Length, Point as IPoint, Rectangle, Renderer, Size, Task, Theme, window,
 };
+use iced_runtime::core::image::Id as ImageId;
+use iced_runtime::image::Allocation;
 use stitchpane_core::editor::{
     AspectChoice, Button as PointerButton, Command, Cursor, Editor, Key, KeyOutcome, MenuEntry,
     Modifiers,
@@ -60,6 +62,8 @@ pub enum Message {
     Picked(dialogs::Purpose, Vec<PathBuf>),
     /// Checks for finished background resamples (UI-009).
     PollBackground,
+    /// iced finished allocating a canvas image; `None` if it could not (UI-011).
+    FrameReady(ImageId, Option<Allocation>),
     CropField(usize, String),
     CropAspect(String),
     CropCustom(usize, String),
@@ -105,9 +109,7 @@ const ASPECTS: [&str; 7] = ["Free", "Original", "1:1", "4:3", "3:2", "16:9", "Cu
 
 pub struct App {
     editor: Editor,
-    frame: Option<image::Handle>,
-    frame_size: Size,
-    labels: Vec<(Point, String)>,
+    frames: Frames,
     canvas_size: Size,
     modifiers: keyboard::Modifiers,
     pointer: IPoint,
@@ -177,9 +179,7 @@ impl App {
         editor.set_background_rendering(true);
         let mut app = Self {
             editor,
-            frame: None,
-            frame_size: Size::ZERO,
-            labels: Vec::new(),
+            frames: Frames::default(),
             canvas_size: Size::ZERO,
             modifiers: keyboard::Modifiers::default(),
             pointer: IPoint::ORIGIN,
@@ -202,25 +202,30 @@ impl App {
         if let Err(e) = result {
             app.modal = Some(Modal::Error(e));
         }
-        app.refresh();
-        (app, Task::none())
+        let task = app.refresh();
+        (app, task)
     }
 
     fn title(&self) -> String {
         self.editor.title()
     }
 
-    /// Re-renders the frame and syncs the crop fields after any change.
-    fn refresh(&mut self) {
+    /// Re-renders the frame and syncs the crop fields after any change. Returns the task
+    /// that allocates the new frame (UI-011).
+    fn refresh(&mut self) -> Task<Message> {
         if let Some(message) = self.editor.take_message() {
             self.modal = Some(Modal::Error(message));
         }
+        let mut task = Task::none();
         if self.canvas_size.width >= 1.0 && self.canvas_size.height >= 1.0 {
             let frame = self.editor.frame();
             let (w, h) = frame.dimensions();
-            self.frame_size = Size::new(w as f32, h as f32);
-            self.frame = Some(image::Handle::from_rgba(w, h, frame.into_raw()));
-            self.labels = self.editor.labels();
+            let frame = CanvasFrame {
+                handle: image::Handle::from_rgba(w, h, frame.into_raw()),
+                size: Size::new(w as f32, h as f32),
+                labels: self.editor.labels(),
+            };
+            task = allocate(self.frames.submit(frame));
         }
         self.exif_notice = self.editor.exif_notice();
         let missing = self.editor.missing_sources();
@@ -239,6 +244,7 @@ impl App {
                 (tool.strength * 100.0).round().to_string(),
             ];
         }
+        task
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -247,15 +253,19 @@ impl App {
         if matches!(message, Message::PollBackground) && !self.editor.poll_background() {
             return Task::none();
         }
+        // A finished allocation changes only what is shown, so it needs no re-render.
+        if let Message::FrameReady(id, allocation) = message {
+            return allocate(self.frames.ready(id, allocation));
+        }
         let task = self.handle(message);
         let fields = self.crop_fields.clone();
         let smear_fields = self.smear_fields.clone();
-        self.refresh();
+        let allocation = self.refresh();
         if typing {
             self.crop_fields = fields;
             self.smear_fields = smear_fields;
         }
-        task
+        Task::batch([task, allocation])
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
@@ -326,7 +336,7 @@ impl App {
             }
             Message::Modal(message) => return dialogs::update(self, message),
             Message::Picked(purpose, paths) => return dialogs::picked(self, purpose, paths),
-            Message::PollBackground => {}
+            Message::PollBackground | Message::FrameReady(..) => {}
             Message::CropField(index, value) => {
                 if let Some(field) = self.crop_fields.get_mut(index) {
                     *field = value;
@@ -698,6 +708,73 @@ impl App {
 
 const MENU_WIDTH: f32 = 260.0;
 
+/// A rendered canvas image and the labels drawn over it.
+#[derive(Clone, Debug)]
+struct CanvasFrame {
+    handle: image::Handle,
+    size: Size,
+    labels: Vec<(Point, String)>,
+}
+
+/// Canvas frames on their way to the screen (UI-011). iced draws nothing for a large image
+/// until it has uploaded it in the background, so a new frame replaces the shown one only
+/// once iced has allocated it. One frame uploads at a time; frames rendered meanwhile
+/// replace each other in `next`, so the newest is uploaded after the current upload.
+#[derive(Default)]
+struct Frames {
+    /// The frame on the canvas, with the allocation that keeps it uploaded.
+    shown: Option<(CanvasFrame, Option<Allocation>)>,
+    uploading: Option<CanvasFrame>,
+    next: Option<CanvasFrame>,
+}
+
+impl Frames {
+    /// Queues a newly rendered frame; returns its handle when it should be uploaded now.
+    fn submit(&mut self, frame: CanvasFrame) -> Option<image::Handle> {
+        if self.uploading.is_some() {
+            self.next = Some(frame);
+            return None;
+        }
+        let handle = frame.handle.clone();
+        self.uploading = Some(frame);
+        Some(handle)
+    }
+
+    /// Shows the uploaded frame `id`; returns the handle of the next frame to upload.
+    /// Without an allocation the frame is shown anyway, so a failed upload cannot leave
+    /// the canvas stuck on an old frame.
+    fn ready(&mut self, id: ImageId, allocation: Option<Allocation>) -> Option<image::Handle> {
+        if self.uploading.as_ref().map(|f| f.handle.id()) != Some(id) {
+            return None;
+        }
+        self.shown = self.uploading.take().map(|frame| (frame, allocation));
+        let next = self.next.take()?;
+        self.submit(next)
+    }
+
+    fn shown(&self) -> Option<&CanvasFrame> {
+        self.shown.as_ref().map(|(frame, _)| frame)
+    }
+}
+
+/// Asks iced to allocate a frame and reports when it is ready to draw (UI-011).
+fn allocate(handle: Option<image::Handle>) -> Task<Message> {
+    let Some(handle) = handle else {
+        return Task::none();
+    };
+    let id = handle.id();
+    // collect() also finishes if iced drops the request, so the frame still gets shown
+    iced_runtime::image::allocate(handle)
+        .collect()
+        .map(move |mut results| {
+            let allocation = match results.pop() {
+                Some(Ok(allocation)) => Some(allocation),
+                Some(Err(_)) | None => None,
+            };
+            Message::FrameReady(id, allocation)
+        })
+}
+
 fn context_menu(entries: &[MenuEntry]) -> Element<'_, Message> {
     let mut list = column![].spacing(0).width(MENU_WIDTH);
     for entry in entries {
@@ -788,14 +865,15 @@ impl Program<Message> for CanvasView<'_> {
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
-        if let Some(handle) = &self.app.frame {
-            frame.draw_image(
-                Rectangle::new(IPoint::ORIGIN, self.app.frame_size),
-                canvas::Image::new(handle.clone()),
-            );
-        }
+        let Some(shown) = self.app.frames.shown() else {
+            return vec![frame.into_geometry()];
+        };
+        frame.draw_image(
+            Rectangle::new(IPoint::ORIGIN, shown.size),
+            canvas::Image::new(shown.handle.clone()),
+        );
         // PROJ-005: label placeholders of missing sources.
-        for (p, label) in &self.app.labels {
+        for (p, label) in &shown.labels {
             frame.fill_text(canvas::Text {
                 content: label.clone(),
                 position: IPoint::new(p.x as f32, p.y as f32),

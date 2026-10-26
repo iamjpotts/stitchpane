@@ -56,6 +56,21 @@ fn app_with(paths: &[&Path]) -> App {
     app
 }
 
+/// Delivers the allocations the headless tests never run, as iced would (UI-011).
+fn present(app: &mut App) {
+    while let Some(id) = app.frames.uploading.as_ref().map(|f| f.handle.id()) {
+        let _ = app.update(Message::FrameReady(id, None));
+    }
+}
+
+fn shown_id(app: &App) -> Option<ImageId> {
+    app.frames.shown().map(|f| f.handle.id())
+}
+
+fn uploading_id(app: &App) -> Option<ImageId> {
+    app.frames.uploading.as_ref().map(|f| f.handle.id())
+}
+
 /// Clicks a widget by its text and feeds the resulting messages to the app.
 fn click(app: &mut App, label: &str) {
     let messages: Vec<Message> = {
@@ -238,6 +253,7 @@ fn snapshot_for_inspection() {
         IPoint::new(300.0, 560.0),
         PointerButton::Secondary,
     ));
+    present(&mut app);
     let mut ui = simulator(app.view());
     let snapshot = ui.snapshot(&Theme::Light).expect("snapshot");
     let path = format!("{dir}/iced-snap.png");
@@ -374,4 +390,41 @@ fn delete_removes_the_selected_image() {
         keyboard::Modifiers::default(),
     ));
     assert_eq!(app.editor.project().state().items.len(), 1);
+}
+
+#[test]
+fn canvas_keeps_the_shown_frame_until_the_next_is_ready() {
+    // spec: UI-011
+    let dir = Scratch::new("frames");
+    let a = dir.image("a.png", 400, 300, None);
+    let mut app = app_with(&[&a]);
+    present(&mut app);
+    let first = shown_id(&app).expect("a frame is shown");
+
+    // a new frame uploads while the old one stays on the canvas
+    let _ = app.update(Message::PointerMove(IPoint::new(500.0, 300.0)));
+    let second = uploading_id(&app).expect("a frame is uploading");
+    assert_eq!(shown_id(&app), Some(first));
+
+    // frames rendered meanwhile wait; only the newest is kept
+    let _ = app.update(Message::PointerMove(IPoint::new(510.0, 300.0)));
+    let _ = app.update(Message::PointerMove(IPoint::new(520.0, 300.0)));
+    let newest = app.frames.next.as_ref().expect("a frame waits").handle.id();
+    assert_eq!(uploading_id(&app), Some(second));
+
+    // a stale report changes nothing
+    let _ = app.update(Message::FrameReady(first, None));
+    assert_eq!(
+        (shown_id(&app), uploading_id(&app)),
+        (Some(first), Some(second))
+    );
+
+    let _ = app.update(Message::FrameReady(second, None));
+    assert_eq!(shown_id(&app), Some(second));
+    assert_eq!(uploading_id(&app), Some(newest));
+    assert!(app.frames.next.is_none());
+
+    let _ = app.update(Message::FrameReady(newest, None));
+    assert_eq!(shown_id(&app), Some(newest));
+    assert!(app.frames.uploading.is_none());
 }

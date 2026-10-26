@@ -4107,6 +4107,7 @@ name = "stitchpane-iced"
 version = "0.1.1"
 dependencies = [
  "iced",
+ "iced_runtime",
  "iced_test",
  "image",
  "rfd",

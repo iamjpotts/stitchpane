@@ -40,6 +40,8 @@ cucumber = "0.23"
 futures = "0.3"
 gtk4 = { version = "0.11", features = ["v4_14"] }
 iced = { version = "0.14", features = ["canvas", "image-without-codecs"] }
+# image::allocate, which iced re-exports only with its `image` feature (and its codecs)
+iced_runtime = "0.14"
 iced_test = "0.14"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 stitchpane-core = { path = "crates/stitchpane-core", version = "0.1.0" }

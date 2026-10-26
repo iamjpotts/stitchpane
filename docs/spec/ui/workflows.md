@@ -87,6 +87,15 @@ Status: Implemented
 Clicking the zoom level in the status bar shall open a menu with the same zoom choices
 as the View menu.
 
+### UI-011: The canvas never blanks while redrawing
+Status: Implemented
+
+When the canvas image changes, the system shall keep showing the previous canvas image
+until the new one is ready to draw, so the canvas never shows an empty or partly drawn
+frame. If newer canvas images are produced while one is being prepared, the system
+shall show the one being prepared when it is ready and then the newest, skipping those
+in between.
+
 ## Keyboard shortcuts
 
 | Action | Shortcut |
@@ -113,3 +122,7 @@ as the View menu.
 - The last folder (UI-007) is not remembered after quitting.
 - Background resampling (UI-009) applies to the on-screen preview only; export always
   resamples at full quality before writing.
+- The iced renderer uploads large images to the GPU in the background and draws nothing
+  for an image until its upload finishes, so the iced build swaps in a new canvas image
+  only once iced reports it allocated (UI-011). The GTK build draws each canvas image
+  synchronously.
